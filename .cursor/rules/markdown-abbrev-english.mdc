@@ -65,3 +65,14 @@ LSU（Load/Store Unit，加载存储单元）
 | NC | Non-Cacheable |
 
 When introducing a new abbreviation not listed above, still expand it once with the conventional English full name from the relevant ISA/spec/docs.
+
+## Context-sensitive abbreviations
+
+Do **not** blindly expand homographs. Example:
+
+| Context | `SPI` means |
+|---------|-------------|
+| GIC / interrupt controller | Shared Peripheral Interrupt |
+| Board peripherals / BSP | Serial Peripheral Interface |
+
+Pick the expansion that matches the surrounding topic.

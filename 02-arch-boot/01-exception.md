@@ -25,22 +25,22 @@
 | **异常向量基址** | `VBAR_ELx` | `mtvec`（M-mode）/ `stvec`（S-mode） | RV 直接写 trap handler 地址 |
 | **异常返回地址** | `ELR_ELx` | `mepc` / `sepc` | |
 | **异常原因** | `ESR_ELx`（EC 字段） | `mcause` / `scause` | RV 最高位 1=interrupt, 0=exception |
-| **Fault 地址** | `FAR_ELx` | `mtval` / `stval` | PMP 出错常看 `mtval` |
+| **Fault 地址** | `FAR_ELx` | `mtval` / `stval` | PMP (Physical Memory Protection) 出错常看 `mtval` |
 | **程序状态/中断屏蔽** | `PSTATE` / `DAIF`（I/F 位） | `mstatus.MIE/SIE` | RV 关中断：`csrc mstatus, MIE` |
 | **系统调用** | `SVC #0` | `ECALL`（U→S）/ `ECALL`（S→M） | |
 | **Secure 调用** | `SMC #0` → EL3 | 无标准 TZ；`ECALL` → M-mode | ARM 有 TrustZone，RV 靠 PMP |
-| **中断控制器** | GICv2/v3 | **PLIC**（平台级）/ **CLIC**（核心本地） | GIC≈PLIC+部分 CLIC 功能 |
-| **核间中断 IPI** | GIC SGI (ID 0–15) | `MSIP`（Machine Soft Interrupt） | PLIC 本身无 SGI |
+| **中断控制器** | GICv2/v3 | **PLIC** (Platform-Level Interrupt Controller)（平台级）/ **CLIC** (Core-Local Interrupt Controller)（核心本地） | GIC (Generic Interrupt Controller)≈PLIC+部分 CLIC 功能 |
+| **核间中断 IPI** (Inter-Processor Interrupt) | GIC SGI (ID 0–15) | `MSIP`（Machine Soft Interrupt） | PLIC 本身无 SGI |
 | **外设中断** | GIC SPI (ID 32+) | PLIC 外部 IRQ 0–1023 | |
 | **本地定时器** | GIC PPI (Timer) | `MTIP`/`STIP`（mtime 比较） | |
 | **快速/安全中断** | FIQ（Group0） | RV 无 FIQ；CLIC 有中断级别 | TrustZone 用 FIQ 分 Secure |
-| **内存保护** | MMU 页表 + TrustZone | MMU（`satp`）+ **PMP** + **PMA** | 常见：PMP NAPOT、PMA 属性 |
+| **内存保护** | MMU (Memory Management Unit) 页表 + TrustZone | MMU（`satp`）+ **PMP** + **PMA** (Physical Memory Attributes) | 常见：PMP NAPOT (Naturally Aligned Power-of-Two)、PMA 属性 |
 | **内存属性** | `MAIR_EL1`（Device/Normal） | **PMA**（Cacheable/IO/Main Memory） | device region 对应 PMA I/O |
 | **内存屏障** | DMB / DSB / ISB | `fence` / `fence.i` | |
-| **Boot Monitor** | BL31 (ATF, EL3) | **OpenSBI**（M-mode） | 都提供 PSCI↔SBI |
+| **Boot Monitor** | BL31 (ATF (Arm Trusted Firmware), EL3) | **OpenSBI** (Supervisor Binary Interface)（M-mode） | 都提供 PSCI (Power State Coordination Interface)↔SBI |
 | **电源管理 API** | PSCI（SMC 调用） | **SBI**（ECALL 调用） | CPU_ON/OFF/RESET |
 | **Secure Boot** | BL1→BL2→BL31→TEE | BootROM(M)→2nd Loader→OpenSBI | RV 通常更简单，无 TZ 链 |
-| **栈指针** | SP_EL0 / SP_ELx | `sp`（各 mode 独立或共用） | M100 stack on TCM |
+| **栈指针** | SP_EL0 / SP_ELx | `sp`（各 mode 独立或共用） | M100 stack on TCM (Tightly-Coupled Memory) |
 | **断点** | Breakpoint Exception | `EBREAK`（编码示例 `0x00100073`） | |
 
 ---
@@ -184,7 +184,7 @@ csrc mstatus, 0x8        // MIE = bit 3
 | **ELR_ELx** | 异常返回地址 | **mepc** / **sepc** | |
 | **ESR_ELx** | 异常综合寄存器（原因） | **mcause** / **scause** | RV：bit63=1 中断，0 异常；低位=原因码 |
 | **FAR_ELx** | Fault 地址 | **mtval** / **stval** | PMP 出错看 **mtval** |
-| **TTBR0/1_EL1** | 页表基址 | **satp** | RV MODE+ASID+PPN |
+| **TTBR0/1_EL1** | 页表基址 | **satp** | RV MODE+ASID (Address Space Identifier)+PPN (Physical Page Number) |
 | **TCR_EL1** | 页表配置 | satp.MODE + PG 位 | |
 | **MAIR_EL1** | Normal/Device 属性 | **PMA** 配置 | PMA：Cacheable / Non-cacheable / IO |
 
@@ -362,7 +362,7 @@ trap_handler:
 
 **你 M100 经验对照**：
 - ARM ATF：`platform_up_stack.S` / `platform_mp_stack.S`
-- RISC-V M100：**stack on TCM**、ILM/DLM 放代码数据，sp 在 SRAM
+- RISC-V M100：**stack on TCM**、ILM (Instruction Local Memory)/DLM (Data Local Memory) 放代码数据，sp 在 SRAM (Static Random-Access Memory)
 - 原理相同：Boot 阶段设 sp → 调 C 函数
 
 ---
@@ -378,7 +378,7 @@ ARM 独有，RISC-V **无标准等价物**：
 | Secure OS | OP-TEE (Secure EL1) | vendor TEE 或纯 M-mode |
 | 隔离机制 | TZASC/TZC + MMU NS bit | **PMP**（物理地址范围权限） |
 | 跨 world 调用 | **SMC** 指令 | **ECALL** 到 M-mode（OpenSBI SBI） |
-| 内存保护 | Secure PA 不可 NS 访问 | PMP 条目设 R/W/X 权限 |
+| 内存保护 | Secure PA (Physical Address) 不可 NS 访问 | PMP 条目设 R/W/X 权限 |
 
 ```
 ARM TrustZone:                    RISC-V 安全模型:
@@ -391,7 +391,7 @@ ARM TrustZone:                    RISC-V 安全模型:
 └─────────────────────┘          └──────────────────┘
 ```
 
-> **你 M100 HSM Secure Boot**：无 TrustZone，HSM 寄存器靠 **PMP** 或地址 decode 限制仅 M-mode 访问，Secure Boot 在 M-mode BootROM 完成验签——原理同 ARM BL1，但没有 world 切换。
+> **你 M100 HSM (Hardware Security Module) Secure Boot**：无 TrustZone，HSM 寄存器靠 **PMP** 或地址 decode 限制仅 M-mode 访问，Secure Boot 在 M-mode BootROM 完成验签——原理同 ARM BL1，但没有 world 切换。
 
 ### World 切换 vs RISC-V ECALL
 
@@ -467,7 +467,7 @@ fence iorw, ow;   /* 或 __asm__ volatile ("fence w,w") */
 2. Sync 与 IRQ 的本质差别？RV 如何表达？
 3. SCR_EL3 管什么？RV 侧近似手段？
 4. VBAR 与 mtvec 的结构差异？
-5. TrustZone 切换时 TLB/缓存直觉上要注意什么？
+5. TrustZone 切换时 TLB (Translation Lookaside Buffer)/缓存直觉上要注意什么？
 
 ---
 

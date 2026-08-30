@@ -1,10 +1,10 @@
-# FreeRTOS 与实时性：任务、同步与机器人选型
+# FreeRTOS (Real-Time Operating System) 与实时性：任务、同步与机器人选型
 
 > **系列**：`03-rtos-bsp`  
 > **前置**：无特别前置  
 > **相关**：[`02-bsp-and-boot.md`](02-bsp-and-boot.md) · [`../01-kernel/01-scheduling.md`](../01-kernel/01-scheduling.md)
 
-面向机器人/控制场景整理 FreeRTOS 核心：任务与优先级、信号量/互斥/队列、FromISR 规则、tickless，以及何时该上 RTOS、何时 PREEMPT_RT / AMP。
+面向机器人/控制场景整理 FreeRTOS 核心：任务与优先级、信号量/互斥/队列、FromISR 规则、tickless，以及何时该上 RTOS、何时 PREEMPT_RT (Preemptible Real-Time) / AMP (Asymmetric Multi-Processing)。
 
 **读完应能**：
 - 对比 Mutex 与 Semaphore
@@ -217,8 +217,8 @@ void UART_IRQHandler(void)
 | 概念 | ARM Cortex-M + FreeRTOS | RISC-V MCU（如 M100/M200） |
 |------|------------------------|------------------------------|
 | 关中断同步 | `taskENTER_CRITICAL()` | 直接 `csrc mstatus, MIE` |
-| 中断优先级 | NVIC 配置 | CLIC/PLIC |
-| 栈 | FreeRTOS 分配 task 栈 | ILM/DLM/TCM |
+| 中断优先级 | NVIC 配置 | CLIC (Core-Local Interrupt Controller)/PLIC (Platform-Level Interrupt Controller) |
+| 栈 | FreeRTOS 分配 task 栈 | ILM (Instruction Local Memory)/DLM (Data Local Memory)/TCM (Tightly-Coupled Memory) |
 | 调度触发 | PendSV 异常 | 软件中断/trap |
 
 ---

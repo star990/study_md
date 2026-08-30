@@ -4,10 +4,10 @@
 > **前置**：[`01-freertos-realtime.md`](01-freertos-realtime.md) 可并行阅读  
 > **相关**：[`../02-arch-boot/03-boot-firmware.md`](../02-arch-boot/03-boot-firmware.md)
 
-从「拿到一颗芯片」到「外设能跑」：启动链、设备树、platform 驱动框架，以及 GPIO/UART/SPI/I2C 与 AXI 家族速记，并对照 FPGA 原型阶段的工作内容。
+从「拿到一颗芯片」到「外设能跑」：启动链、设备树、platform 驱动框架，以及 GPIO (General-Purpose Input/Output)/UART (Universal Asynchronous Receiver/Transmitter)/SPI (Serial Peripheral Interface)/I2C (Inter-Integrated Circuit) 与 AXI (Advanced eXtensible Interface) 家族速记，并对照 FPGA 原型阶段的工作内容。
 
 **读完应能**：
-- 口述 Zynq/FSBL 与 ATF 的对应
+- 口述 Zynq/FSBL 与 ATF (Arm Trusted Firmware) 的对应
 - 写清 DT 匹配到 probe 的路径
 - 区分 AXI-Lite 与 Full 的直觉差异
 
@@ -304,7 +304,7 @@ Device 模式：USB Gadget 框架 → ConfigFS
 | 协议 | 特点 | 用途 |
 |------|------|------|
 | **AXI-Lite** | 简单，无 burst | 寄存器访问、IP 初始化 |
-| **AXI-Full** | 完整 burst，memory map | DDR 访问、DMA |
+| **AXI-Full** | 完整 burst，memory map | DDR 访问、DMA (Direct Memory Access) |
 | **AXI-Stream** | 无地址，数据流 | 视频/信号处理 pipeline |
 
 ```
@@ -312,7 +312,7 @@ Device 模式：USB Gadget 框架 → ConfigFS
 一拍大小 = 2^AXSIZE
 ```
 
-### AHB
+### AHB (Advanced High-performance Bus)
 
 ```
 Burst 类型：SINGLE, INCR, WRAP
@@ -336,7 +336,7 @@ Burst 长度：1, 4, 8, 16
 
 | FPGA 原型工作 | M100/M200 经验 | 机器人芯片 Zynq |
 |---------------|---------------------|-----------------|
-| Boot 验证 | Flash boot + HSM secure boot | FSBL → U-Boot → Linux |
+| Boot 验证 | Flash boot + HSM (Hardware Security Module) secure boot | FSBL → U-Boot → Linux |
 | Core 性能 | CoreMark 优化 | A53 性能摸底 |
 | Cache/DMA | I/D Cache + DMA burst | CCI cache 一致性 |
 | Debug | OpenOCD + GDB + VCS | JTAG + Xilinx hw_server |

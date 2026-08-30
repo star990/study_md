@@ -1,4 +1,4 @@
-# Linux 内存管理：伙伴系统、页表与 DMA 一致性
+# Linux 内存管理：伙伴系统、页表与 DMA (Direct Memory Access) 一致性
 
 > **系列**：`01-kernel`  
 > **前置**：[`01-scheduling.md`](01-scheduling.md) 可先读（非强制）  
@@ -45,7 +45,7 @@
 
 ---
 
-## 2.2 页表与 TLB
+## 2.2 页表与 TLB (Translation Lookaside Buffer)
 
 ### 四级页表（AArch64，4KB page）
 
@@ -59,14 +59,14 @@ VA (Virtual Address)
   │     │     │     │     └── PA (Physical Address)
 ```
 
-### TLB 匹配条件（见 `02-arch-boot` 异常/MMU 笔记）
+### TLB 匹配条件（见 `02-arch-boot` 异常/MMU (Memory Management Unit) 笔记）
 
 A72 中 TLB entry 匹配需满足：
 
 1. VA page number == TLB entry 中的 VA page number
 2. **Memory space identifier** 匹配（Secure/NS、EL3/EL2/EL1/EL0）
-3. 若 non-Global：ASID == TLB entry 中的 ASID
-4. VMID == TLB entry 中的 VMID（虚拟化）
+3. 若 non-Global：ASID (Address Space Identifier) == TLB entry 中的 ASID
+4. VMID (Virtual Machine Identifier) == TLB entry 中的 VMID（虚拟化）
 
 **TrustZone 切换**：Secure/Non-secure 是不同的 memory space，TLB entry 带 NS 标签。
 
@@ -270,7 +270,7 @@ CPU 读 DMA RX buffer:
 
 ### 三个实战案例
 
-#### 案例 1：HSM MMU 配错
+#### 案例 1：HSM (Hardware Security Module) MMU 配错
 
 ```
 问题：HSM 寄存器 MMU 配成 Normal（cacheable）而非 Device
@@ -323,7 +323,7 @@ void dma_sync_single_for_device(struct device *dev, dma_addr_t dma_handle,
 
 | ARM Linux | RISC-V MCU |
 |-----------|------------|
-| dma_map_single + flush/invalidate | 手动 flush/invalidate 或 PMA Non-cacheable |
+| dma_map_single + flush/invalidate | 手动 flush/invalidate 或 PMA (Physical Memory Attributes) Non-cacheable |
 | Device-nGnRnE 页属性 | PMA I/O 类型 |
 | CCI hardware coherent | 通常无，纯软件 |
 

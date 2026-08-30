@@ -1,10 +1,10 @@
-# RISC-V Core：特权级、CSR 与 Trap
+# RISC-V Core：特权级、CSR (Control and Status Register) 与 Trap
 
 > **系列**：`04-riscv-core`  
 > **前置**：可先扫一眼 [`../02-arch-boot/01-exception.md`](../02-arch-boot/01-exception.md) 里的 ARM↔RV 总对照表（迁移用）；本文以 **RISC-V 为本**，面向「这颗 core 要真正做出什么」。  
-> **相关**：[`01-pipeline.md`](01-pipeline.md) · [`03-memory-bus.md`](03-memory-bus.md)（Load→SRAM 全路径）· [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md)
+> **相关**：[`01-pipeline.md`](01-pipeline.md) · [`03-memory-bus.md`](03-memory-bus.md)（Load→SRAM (Static Random-Access Memory) 全路径）· [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md)
 
-造一颗 RV core，异常与特权模型是骨架：谁在什么 mode 跑、trap 怎么进、CSR 记什么、中断如何挂上来。ARM 侧对照见架构系列；这里只写 **M-mode 最小可实现集**，并标明以后加 U/PMP 时要扩什么。
+造一颗 RV core，异常与特权模型是骨架：谁在什么 mode 跑、trap 怎么进、CSR 记什么、中断如何挂上来。ARM 侧对照见架构系列；这里只写 **M-mode 最小可实现集**，并标明以后加 U/PMP (Physical Memory Protection) 时要扩什么。
 
 **读完应能**：
 - 画出 U/S/M 与典型裸机/OS 落点
@@ -25,7 +25,7 @@ U-mode   用户态：应用（靠 PMP/MMU 隔离）
 
 | Mode | 典型软件 | V0 简易 GTM / MCU |
 |------|----------|-------------------|
-| M | Boot、固件、RTOS 内核 | **建议 V0 只实现 M** |
+| M | Boot、固件、RTOS (Real-Time Operating System) 内核 | **建议 V0 只实现 M** |
 | S | Linux | 以后再开 |
 | U | App | 做进程隔离时再开 + PMP |
 
@@ -101,19 +101,19 @@ mcause[XLEN-2:0] = 原因码
 | 1 | Instruction access fault | PMP/总线错 |
 | 2 | Illegal instruction | |
 | 3 | Breakpoint（`EBREAK`） | 调试 |
-| 4/5/6/7 | load/store/AMO misaligned / access fault | |
+| 4/5/6/7 | load/store/AMO (Atomic Memory Operation) misaligned / access fault | |
 | 8/9/11 | ECALL from U/S/M | 系统调用 / 固件调用 |
-| 12/13/15 | page fault 类 | 有 MMU/SATP 时 |
+| 12/13/15 | page fault 类 | 有 MMU (Memory Management Unit)/SATP 时 |
 
 ### 4.2 标准中断（Interrupt=1）
 
 | 码 | 名 | 典型来源 |
 |----|-----|----------|
-| 3 | Machine software interrupt | `MSIP`（IPI） |
+| 3 | Machine software interrupt | `MSIP`（IPI (Inter-Processor Interrupt)） |
 | 7 | Machine timer interrupt | `mtime`/`mtimecmp` → `MTIP` |
-| 11 | Machine external interrupt | PLIC/CLIC → `MEIP` |
+| 11 | Machine external interrupt | PLIC (Platform-Level Interrupt Controller)/CLIC (Core-Local Interrupt Controller) → `MEIP` |
 
-V0：至少能接 **external**（或一根 IRQ 线进 `mip.MEIP`）+ 可选 timer。
+V0：至少能接 **external**（或一根 IRQ (Interrupt Request) 线进 `mip.MEIP`）+ 可选 timer。
 
 ---
 
@@ -135,7 +135,7 @@ csrs mstatus, 8
 
 委托给 S-mode 时用 `mideleg`/`medeleg`（Linux 平台）；**纯 M 裸机 V0 可不实现委托**。
 
-与 PLIC：外设 → PLIC → 拉高到 hart 的 MEIP；handler 里 **claim**，处理完 **complete**（见架构系列 GIC↔PLIC 文）。
+与 PLIC：外设 → PLIC → 拉高到 hart (hardware thread) 的 MEIP；handler 里 **claim**，处理完 **complete**（见架构系列 GIC (Generic Interrupt Controller)↔PLIC 文）。
 
 ---
 
@@ -182,7 +182,7 @@ void trap_handler(void) {
 | 「ARM 的 XX 寄存器 RV 叫什么？」 | [`../02-arch-boot/01-exception.md`](../02-arch-boot/01-exception.md) 总表 + 分节对照 |
 | 「我这颗 core 的 trap 硬件行为 / CSR 复位值 / 波形」 | **本文** + [`01-pipeline.md`](01-pipeline.md) |
 | 「PLIC 和 GIC 生命周期」 | [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md) |
-| 「OpenSBI / ATF」 | [`../02-arch-boot/03-boot-firmware.md`](../02-arch-boot/03-boot-firmware.md) |
+| 「OpenSBI (Supervisor Binary Interface) / ATF (Arm Trusted Firmware)」 | [`../02-arch-boot/03-boot-firmware.md`](../02-arch-boot/03-boot-firmware.md) |
 
 一句话：**架构系列解决迁移对照；本系列解决造核实现。**
 
@@ -202,7 +202,7 @@ void trap_handler(void) {
 2. Trap 进入时 `mstatus.MIE/MPIE/MPP` 如何变化？`mret` 又如何？
 3. 为何说「只有 Local Monitor」不够——且这与 trap CSR 是不是同一层问题？
 4. 最小要哪些 CSR 才能跑「一条非法指令进 handler 再 mret」？
-5. MCU 无 TZ 时，用什么手段保护 HSM 一类外设寄存器？
+5. MCU 无 TZ 时，用什么手段保护 HSM (Hardware Security Module) 一类外设寄存器？
 
 ---
 

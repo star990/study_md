@@ -1,10 +1,10 @@
-# GICv3 中断控制器（对照 PLIC / CLIC）
+# GICv3 中断控制器（对照 PLIC (Platform-Level Interrupt Controller) / CLIC (Core-Local Interrupt Controller)）
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`01-exception.md`](01-exception.md)  
 > **相关**：[`03-boot-firmware.md`](03-boot-firmware.md)
 
-从外设到 CPU 的中断旅程：Distributor / Redistributor、Group、SPI/PPI/SGI，以及和 RISC-V PLIC/CLIC、Linux 中断框架的对应关系。
+从外设到 CPU 的中断旅程：Distributor / Redistributor、Group、SPI (Shared Peripheral Interrupt)/PPI (Private Peripheral Interrupt)/SGI (Software Generated Interrupt)，以及和 RISC-V PLIC/CLIC、Linux 中断框架的对应关系。
 
 **读完应能**：
 - 描述一次 SPI 从触发到 ISR 的路径
@@ -14,7 +14,7 @@
 ---
 ## GICv3 中断控制器
 
-## 2.1 GIC 在系统中的位置 — 对照 PLIC/CLIC
+## 2.1 GIC (Generic Interrupt Controller) 在系统中的位置 — 对照 PLIC/CLIC
 
 ```
 ARM GIC:                           RISC-V PLIC:
@@ -26,12 +26,12 @@ ARM GIC:                           RISC-V PLIC:
 | ARM GIC 组件 | RISC-V 对应 | 作用 |
 |--------------|-------------|------|
 | **GICD** (Distributor) | **PLIC** 全局寄存器 | 管理所有外部中断 enable/priority |
-| **GICR** (Redistributor) | PLIC per-hart 窗口 | 每个 hart 的 enable/threshold/claim |
+| **GICR** (Redistributor) | PLIC per-hart (hardware thread) 窗口 | 每个 hart 的 enable/threshold/claim |
 | **GIC CPU Interface** | PLIC **Claim/Complete** | CPU 侧 ACK/EOI |
-| **ITS** (MSI) | 无标准（vendor DMA/MSI） | PCIe MSI 中断 |
-| **SGI** (软件中断) | **MSIP**（Machine Soft Interrupt） | 核间 IPI |
+| **ITS** (MSI) | 无标准（vendor DMA (Direct Memory Access)/MSI） | PCIe MSI 中断 |
+| **SGI** (软件中断) | **MSIP** (Machine Software Interrupt-Pending)（Machine Soft Interrupt） | 核间 IPI (Inter-Processor Interrupt) |
 | **PPI** (私有外设) | **MTIP**（Timer）、**MEIP**（本地） | 每核私有 |
-| **SPI** (共享外设) | PLIC **IRQ 0–1023** | UART/DMA/HSM 等 |
+| **SPI** (共享外设) | PLIC **IRQ (Interrupt Request) 0–1023** | UART (Universal Asynchronous Receiver/Transmitter)/DMA/HSM (Hardware Security Module) 等 |
 
 ---
 
@@ -78,7 +78,7 @@ ARM GIC:                           RISC-V PLIC:
 | Group 0 (Secure) | FIQ → EL3 | **无**；所有 IRQ 进 M-mode 或委托 S-mode |
 | Group 1 NS | IRQ → Linux | PLIC → `mideleg` → S-mode → Linux |
 
-> **遗留 Q1 对照**：ARM Secure/NS 中断由 RTL+GIC+SCR_EL3 三层决定。RISC-V 无 Secure 中断，HSM 安全靠 **PMP 禁止 S-mode 访问** + 仅 M-mode 驱动 HSM。
+> **遗留 Q1 对照**：ARM Secure/NS 中断由 RTL+GIC+SCR_EL3 三层决定。RISC-V 无 Secure 中断，HSM 安全靠 **PMP (Physical Memory Protection) 禁止 S-mode 访问** + 仅 M-mode 驱动 HSM。
 
 > **遗留 Q2 对照**：ARM FIQ 给 EL3 处理，Linux 不处理 FIQ。RISC-V 无 FIQ；若 M-mode 处理某 IRQ，S-mode Linux 同样看不到——需 `mideleg` 把外设 IRQ 委托给 S-mode。
 
@@ -164,7 +164,7 @@ uart0: serial@10000000 {
 
 ---
 
-## 2.8 中断 affinity 与 SMP
+## 2.8 中断 affinity 与 SMP (Symmetric Multi-Processing)
 
 | ARM | RISC-V |
 |-----|--------|

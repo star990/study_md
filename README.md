@@ -1,7 +1,7 @@
 # Embedded Stack Notes
 
 按主题撰写的嵌入式学习库：一篇 Markdown ≈ 一个 topic（长文博客体例）。  
-路径覆盖 **Linux Kernel → 架构/启动 → RTOS/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP**。
+路径覆盖 **Linux Kernel → 架构/启动 → RTOS (Real-Time Operating System)/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP**。
 
 面向嵌入式 / BSP / SoC 学习者；可自用，也可直接分享给同伴当复习路径。
 
@@ -63,8 +63,8 @@
 
 | 文章 | 主题 |
 |------|------|
-| [01-scheduling.md](01-kernel/01-scheduling.md) | CFS / EAS / RT / PREEMPT_RT、底半部、RTOS+PMP |
-| [02-memory.md](01-kernel/02-memory.md) | 伙伴/slab、页表、DMA 与 cache 一致性 |
+| [01-scheduling.md](01-kernel/01-scheduling.md) | CFS (Completely Fair Scheduler) / EAS (Energy Aware Scheduling) / RT / PREEMPT_RT (Preemptible Real-Time)、底半部、RTOS+PMP (Physical Memory Protection) |
+| [02-memory.md](01-kernel/02-memory.md) | 伙伴/slab、页表、DMA (Direct Memory Access) 与 cache 一致性 |
 | [03-crash-debug.md](01-kernel/03-crash-debug.md) | oops / panic / hung、crash 与 tracing |
 | [04-android-soc-scheduling.md](01-kernel/04-android-soc-scheduling.md) | Android/SoC 调度工程；Part B 链到总线专文 |
 
@@ -73,17 +73,17 @@
 | 文章 | 主题 |
 |------|------|
 | [01-exception.md](02-arch-boot/01-exception.md) | **原 Day1 对照主文**：AArch64 异常/寄存器 ↔ RISC-V（迁移用） |
-| [02-gic.md](02-arch-boot/02-gic.md) | GICv3 ↔ PLIC/CLIC |
-| [03-boot-firmware.md](02-arch-boot/03-boot-firmware.md) | ATF / OpenSBI / 启动与安全衔接 |
-| [04-security-secureboot-tee.md](02-arch-boot/04-security-secureboot-tee.md) | Secure Boot、HSM、OP-TEE |
+| [02-gic.md](02-arch-boot/02-gic.md) | GICv3 ↔ PLIC (Platform-Level Interrupt Controller)/CLIC (Core-Local Interrupt Controller) |
+| [03-boot-firmware.md](02-arch-boot/03-boot-firmware.md) | ATF (Arm Trusted Firmware) / OpenSBI (Supervisor Binary Interface) / 启动与安全衔接 |
+| [04-security-secureboot-tee.md](02-arch-boot/04-security-secureboot-tee.md) | Secure Boot、HSM (Hardware Security Module)、OP-TEE (Trusted Execution Environment) |
 
 ### `04-riscv-core/`
 
 | 文章 | 主题 | 状态 |
 |------|------|------|
 | [01-pipeline.md](04-riscv-core/01-pipeline.md) | 流水线 | 草稿 |
-| [02-csr-trap.md](04-riscv-core/02-csr-trap.md) | **RV 特权级 / CSR / Trap（造核用）** | 成文初版 |
-| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | **Load：LSU→TLB/PMP/PMA→D$→总线→SRAM**；单核闭环 + SMP | 成文初版 |
+| [02-csr-trap.md](04-riscv-core/02-csr-trap.md) | **RV 特权级 / CSR (Control and Status Register) / Trap（造核用）** | 成文初版 |
+| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | **Load：LSU (Load/Store Unit)→TLB (Translation Lookaside Buffer)/PMP/PMA (Physical Memory Attributes)→D$→总线→SRAM** (Static Random-Access Memory)；单核闭环 + SMP (Symmetric Multi-Processing) | 成文初版 |
 | [04-verification.md](04-riscv-core/04-verification.md) | 验证 | 草稿 |
 
 > **分工**：`02-arch-boot` = ARM 主线 + RV 对照；`04-riscv-core` = 以 RISC-V 为本写造核行为。对照表在 `01-exception`；trap 在 `02-csr-trap`；访存闭环在 `03-memory-bus`。
@@ -99,7 +99,7 @@
 
 | 文章 | 主题 |
 |------|------|
-| [01-spinlock-to-bus.md](05-bus-rtl/01-spinlock-to-bus.md) | spinlock → AXI Exclusive / Monitor；对照 AHB `HLOCK` |
+| [01-spinlock-to-bus.md](05-bus-rtl/01-spinlock-to-bus.md) | spinlock → AXI (Advanced eXtensible Interface) Exclusive / Monitor；对照 AHB (Advanced High-performance Bus) `HLOCK` |
 
 ### `06-gtm-ip/`
 

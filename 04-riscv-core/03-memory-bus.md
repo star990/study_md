@@ -218,7 +218,7 @@ D$ miss 或 page walk 时，MEM 级 **stall**（或记分牌挂起该指令）�
 |------|------|
 | MODE | `Bare`=不做翻译（VA≈PA）；`Sv32`/`Sv39`/…=开分页 |
 | ASID | 地址空间 ID；详解见 §4.3 |
-| PPN | Physical Page Number：**根页表**所在物理页号 |
+| PPN (Physical Page Number) | Physical Page Number：**根页表**所在物理页号 |
 
 ```text
 satp.MODE == Bare  →  根本不进 DTLB/walker（附录 A）
@@ -619,7 +619,7 @@ RISC-V Privileged Spec 要求实现为每个物理地址区间提供 **PMA**，�
 |----------|------|
 | **固定地址图（硬件写死）** | 译码：`0x2000_0000` SRAM=cacheable；`0x4000_0000` MMIO=Device |
 | **可配 PMA 寄存器/表** | 厂商 CSR：按基址+大小配 cacheable、idempotent、ordering… |
-| **页表扩展（如 Svpbmt）** | leaf PTE 带 PBMT，软件按页覆盖/细化物理属性 |
+| **页表扩展（如 Svpbmt (Sv Page-Based Memory Types)）** | leaf PTE 带 PBMT，软件按页覆盖/细化物理属性 |
 | **与 PMP 表耦合一张「区域表」** | 同一槽既有 R/W/X 又有 cache 位（有的 IP 这么做） |
 
 本文教学模型：**芯片有一张 PA→属性的查表（固定或可配）**；开了 Svpbmt 时再与 PTE 属性 **合并**（见 §6.5）。
@@ -658,7 +658,7 @@ RISC-V Privileged Spec 要求实现为每个物理地址区间提供 **PMA**，�
 ```
 
 **本文场景**：SRAM 窗 PMA = **Normal + cacheable** → 走 §7 D$。  
-UART 等 MMIO = **Device + non-cacheable** → 永不进 D$，每次 `lw` 都上总线。
+UART (Universal Asynchronous Receiver/Transmitter) 等 MMIO = **Device + non-cacheable** → 永不进 D$，每次 `lw` 都上总线。
 
 ### 6.4 和端口的关系
 

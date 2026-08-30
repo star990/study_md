@@ -1,10 +1,10 @@
-# Linux 进程调度：CFS / EAS / RT / PREEMPT_RT
+# Linux 进程调度：CFS (Completely Fair Scheduler) / EAS (Energy Aware Scheduling) / RT / PREEMPT_RT (Preemptible Real-Time)
 
 > **系列**：`01-kernel`  
 > **前置**：对进程与中断有基本概念即可  
 > **相关**：[`02-memory.md`](02-memory.md) · [`03-crash-debug.md`](03-crash-debug.md) · [`04-android-soc-scheduling.md`](04-android-soc-scheduling.md) · [`../05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md)
 
-从调度 class 讲到机器人场景里该用谁：CFS 公平、EAS 能效、FIFO/RR、以及 PREEMPT_RT 如何把延迟压下去。文中一并整理 softirq / tasklet / workqueue / spinlock 与 RTOS+PMP 隔离思路。
+从调度 class 讲到机器人场景里该用谁：CFS 公平、EAS 能效、FIFO/RR、以及 PREEMPT_RT 如何把延迟压下去。文中一并整理 softirq / tasklet / workqueue / spinlock 与 RTOS (Real-Time Operating System)+PMP 隔离思路。
 
 **读完应能**：
 - 画出调度器与实时路径的关系
@@ -261,7 +261,7 @@ Linux 的 PI mutex（`CONFIG_RT_MUTEXES`）实现了优先级继承。
 | 原版 Linux | PREEMPT_RT | 为什么重要 |
 |------------|------------|------------|
 | 多数 `spinlock` 关抢占 | 变成 **rt_mutex / sleeping spinlock** | 持锁时高优先级可抢占低优先级 |
-| 硬中断里跑长 handler | **IRQ 线程化**（`irq_thread`） | 中断可被更高优先级线程抢占 |
+| 硬中断里跑长 handler | **IRQ (Interrupt Request) 线程化**（`irq_thread`） | 中断可被更高优先级线程抢占 |
 | 关中断临界区很长 | 尽量缩短；真正关中断用 `raw_spinlock` | 降低「关中断导致的延迟」 |
 | softirq 在硬中断尾部 | 可移到线程上下文（ksoftirqd 等） | softirq 不再拖死实时任务 |
 | print_console / 部分 printk | 可延后 | 避免 printk 拖垮实时路径 |
@@ -319,11 +319,11 @@ cyclictest -m -S -p 90 -i 200 -l 100000
 - **不是硬实时证明**：仍是 best-effort + 调优；功能安全认证常仍要 MCU/RTOS 侧
 - 内核路径、驱动写坏（关中断太久、`raw_spin` 滥用）仍会出尖峰
 - 延迟通常 **高于** 裸机 FreeRTOS（1–10μs），但生态远强
-- GPU/NPU 驱动、DMA、文件系统仍可能引入抖动
+- GPU/NPU 驱动、DMA (Direct Memory Access)、文件系统仍可能引入抖动
 
 ### 口述要点（机器人芯片场景）
 
-> 「PREEMPT_RT 把 Linux 从『软实时』推到『工程可用的准硬实时』：IRQ 线程化 + sleeping lock 是关键。电机级微秒环若必须证明 WCET，仍倾向 RTOS/MCU；视觉+规划+网络同 SoC 时，PREEMPT_RT + isolcpus 或 AMP（Linux+RTOS）更常见。」
+> 「PREEMPT_RT 把 Linux 从『软实时』推到『工程可用的准硬实时』：IRQ 线程化 + sleeping lock 是关键。电机级微秒环若必须证明 WCET，仍倾向 RTOS/MCU；视觉+规划+网络同 SoC 时，PREEMPT_RT + isolcpus 或 AMP (Asymmetric Multi-Processing)（Linux+RTOS）更常见。」
 
 > **详见下一节 §1.6**：softirq / tasklet / workqueue / spinlock 在主线与 PREEMPT_RT 上的完整对照。
 
@@ -511,7 +511,7 @@ irqreturn_t my_thread_fn(int irq, void *dev)
 
 | 原语 | 能睡？ | 关什么 | 典型场景 |
 |------|--------|--------|----------|
-| **`spinlock_t`** | 否 | 关抢占（SMP 上自旋） | 短临界区；与 softirq 共享用 `spin_lock_bh` |
+| **`spinlock_t`** | 否 | 关抢占（SMP (Symmetric Multi-Processing) 上自旋） | 短临界区；与 softirq 共享用 `spin_lock_bh` |
 | **`spinlock_irq` / `_irqsave`** | 否 | 关抢占+关（本 CPU）硬中断 | 与硬中断 handler 共享数据 |
 | **`raw_spinlock_t`** | 否 | 真·硬自旋 | 极短；**PREEMPT_RT 上几乎唯一还能硬关抢占的锁** |
 | **`mutex`** | **能** | 无 | 进程上下文；workqueue / 线程化 IRQ / ioctl |
@@ -527,7 +527,7 @@ softirq ↔ 进程         → spin_lock_bh
 RT 上「必须不睡」的瞬间 → raw_spinlock（越短越好）
 ```
 
-与 [`04-android-soc-scheduling.md`](04-android-soc-scheduling.md) Part B 及 [`../05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) 衔接：spinlock 底层是 **LDXR/STXR + Monitor + 一致性**；在 softirq/硬中断里自旋过久 = 延迟尖峰。
+与 [`04-android-soc-scheduling.md`](04-android-soc-scheduling.md) Part B 及 [`../05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) 衔接：spinlock 底层是 **LDXR/STXR (Load-Exclusive / Store-Exclusive) + Monitor + 一致性**；在 softirq/硬中断里自旋过久 = 延迟尖峰。
 
 ---
 
@@ -597,7 +597,7 @@ PREEMPT_RT：
 |------|------|
 | 电机周期 100μs 内必须响应 | 优先 **隔离核 + SCHED_FIFO**；关键 IRQ 线程提优先级；或 AMP 到 RTOS |
 | 传感器融合可睡 | workqueue / 用户 RT 线程 |
-| 网络收包 | softirq/NAPI；RT 上接受 ksoftirqd，用 cpuset 与控制核隔离 |
+| 网络收包 | softirq/NAPI (New API)；RT 上接受 ksoftirqd，用 cpuset 与控制核隔离 |
 
 ---
 
@@ -645,7 +645,7 @@ static irqreturn_t thread(int i, void *d) { /* 可睡 */ return IRQ_HANDLED; }
 | 确定性可证明性 | 弱 | 中（测出来） | **强**（简单路径） |
 | 内存占用 | 大 | 大 | **极小（KB）** |
 | 网络/文件系统/驱动生态 | **最强** | 同左 | 弱（LwIP/FatFS） |
-| 进程隔离 / MMU / 安全 | 完整 | 完整 | 默认弱（可加 PMP） |
+| 进程隔离 / MMU (Memory Management Unit) / 安全 | 完整 | 完整 | 默认弱（可加 PMP） |
 | 开发效率 | 高 | 高 | 中（裸机感） |
 | 功能安全（ISO）举证 | 难 | 难 | **相对容易** |
 | 适用 | AI/视觉/云边 | 同 SoC 软实时控制 | 电机/急停/传感器环 |
@@ -702,7 +702,7 @@ static irqreturn_t thread(int i, void *d) { /* 可睡 */ return IRQ_HANDLED; }
 | 目标 | 非目标 |
 |------|--------|
 | 任务 A 不能读写任务 B 的栈/数据 | 完整 Linux 级虚拟内存（页表/COW） |
-| 用户态不能直接摸外设寄存器 | 完整 TEE/TrustZone |
+| 用户态不能直接摸外设寄存器 | 完整 TEE (Trusted Execution Environment)/TrustZone |
 | 非法访问触发 trap → kill/重启任务 | 多核复杂 NUMA |
 | M-mode 内核可信计算基（TCB）尽量小 | 把所有驱动塞进 U-mode |
 
@@ -745,8 +745,8 @@ static irqreturn_t thread(int i, void *d) { /* 可睡 */ return IRQ_HANDLED; }
 
 1. **内核栈永不映射给 U**：PMP 不给 U 看内核栈区间（或整段内核 RAM 对 U 关闭）。
 2. **切换任务 = 只改「当前任务」相关槽**，固定槽不动。
-3. 用 **NAPOT** 对齐区域（常用 NAPOT）；不对齐就多条 TOR。
-4. 切完 PMP 后必须 **`fence` / SFENCE.VMA 类屏障**（无 MMU 时至少 `fence` + 确认 CSR 写完成）。
+3. 用 **NAPOT** (Naturally Aligned Power-of-Two) 对齐区域（常用 NAPOT）；不对齐就多条 TOR。
+4. 切完 PMP 后必须 **`fence` / SFENCE.VMA 类屏障**（无 MMU 时至少 `fence` + 确认 CSR (Control and Status Register) 写完成）。
 
 ### 1.7.4 上下文里要存什么
 
@@ -828,7 +828,7 @@ mret 回 U
 
 - 延时 / yield / 睡眠
 - 队列、信号量、互斥（内部碰共享内核对象）
-- 读写 UART/SPI/I2C/电机寄存器
+- 读写 UART (Universal Asynchronous Receiver/Transmitter)/SPI (Serial Peripheral Interface)/I2C (Inter-Integrated Circuit)/电机寄存器
 - 申请堆（从内核堆划一块并改 PMP 或从任务私有 heap 分配）
 - 创建/删除任务、改优先级
 - 映射共享 IPC 窗（谨慎）

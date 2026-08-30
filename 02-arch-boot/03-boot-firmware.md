@@ -1,4 +1,4 @@
-# 固件启动链：ATF 与 OpenSBI / Secure Boot 衔接
+# 固件启动链：ATF (Arm Trusted Firmware) 与 OpenSBI / Secure Boot 衔接
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`01-exception.md`](01-exception.md)  
@@ -22,7 +22,7 @@ BL1→BL31→TEE→OS 的职责切分，SMC/PSCI 与 RISC-V SBI 的对应，以�
 | 运行级别 | EL3 (Monitor) | **M-mode** |
 | Boot 阶段 | BL1→BL2→BL31→BL32→BL33 | BootROM→2nd Loader→**OpenSBI**→U-Boot/App |
 | Secure 服务 | SMC → OP-TEE | ECALL → **SBI** |
-| 电源管理 | **PSCI** | **SBI HSM**（Hart Start/Stop） |
+| 电源管理 | **PSCI** | **SBI HSM**（Hart (hardware thread) Start/Stop） |
 | 多核启动 | BL31 PSCI CPU_ON | OpenSBI **HSM** + **sbi_hart_start** |
 
 ---
@@ -78,8 +78,8 @@ Reset → BootROM (M-mode) → 验签 → 加载 Flash App → M-mode 裸机运�
 | eFuse | ✓ 读 key/lifecycle | ✓ HSM key |
 | Cache | ICache/DCache | ICache/DCache |
 | 验签 | BL2 证书链 | App image 签名（Secure Boot） |
-| Boot 介质 | eMMC/UFS/SPI/XIP | **Flash XIP**（M100 boot from flash） |
-| Console | UART | UART |
+| Boot 介质 | eMMC/UFS/SPI (Serial Peripheral Interface)/XIP | **Flash XIP**（M100 boot from flash） |
+| Console | UART (Universal Asynchronous Receiver/Transmitter) | UART |
 | 跳转 | → BL2 | → Flash App |
 
 ### BL31 ↔ OpenSBI
@@ -90,7 +90,7 @@ Reset → BootROM (M-mode) → 验签 → 加载 Flash App → M-mode 裸机运�
 | 跨特权调用 | **SMC** 分发 | **ECALL → SBI** 分发 |
 | CPU 上下电 | **PSCI** CPU_ON/OFF | **SBI HSM** hart start/stop |
 | 定时器 | ARM Arch Timer | **SBI TIME** set_timer |
-| IPI | GIC SGI | **SBI IPI** send |
+| IPI (Inter-Processor Interrupt) | GIC (Generic Interrupt Controller) SGI | **SBI IPI** send |
 | 系统复位 | PSCI SYSTEM_RESET | **SBI SRST** system_reset |
 | TEE | 转发 SMC 给 OP-TEE | vendor 扩展 SBI |
 

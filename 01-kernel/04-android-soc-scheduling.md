@@ -1,10 +1,10 @@
-# Android / SoC 调度工程：从 CFS/EAS 到厂商 Hint
+# Android / SoC 调度工程：从 CFS (Completely Fair Scheduler)/EAS (Energy Aware Scheduling) 到厂商 Hint
 
 > **系列**：`01-kernel`  
 > **前置**：[`01-scheduling.md`](01-scheduling.md)  
 > **相关**：[`../05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md)
 
-手机与 SoC 产品侧如何把调度跑起来：EAS、WALT、cpuset/uclamp、PerfLock/Hint、Loading 优化与现场抓数；Part B 再把同步原语接到一致性与互联（细节总线机制请看 spinlock 专文）。
+手机与 SoC 产品侧如何把调度跑起来：EAS、WALT (Window-Assisted Load Tracking)、cpuset/uclamp、PerfLock/Hint、Loading 优化与现场抓数；Part B 再把同步原语接到一致性与互联（细节总线机制请看 spinlock 专文）。
 
 **读完应能**：
 - 说明 EAS/WALT 在选核中的角色
@@ -330,7 +330,7 @@ adb shell top
 **C. 内核/驱动侧**
 
 1. 减少升频滞后（WALT 窗口、schedutil rate limit）。  
-2. 中断亲和：重负载时勿让无关 IRQ 打满大核。  
+2. 中断亲和：重负载时勿让无关 IRQ (Interrupt Request) 打满大核。  
 3. 热策略：Loading 允许短时更高功耗曲线（power budget）。
 
 ### 6.3 稳态对局（对比 Loading）
@@ -450,11 +450,11 @@ echo 1 > /sys/kernel/tracing/events/sched/sched_switch/enable
 
 | 维度 | Android 手机 | 机器人 / 车规 MCU·SoC |
 |------|--------------|------------------------|
-| 默认调度 | CFS + EAS | RTOS 或 Linux PREEMPT_RT |
+| 默认调度 | CFS + EAS | RTOS (Real-Time Operating System) 或 Linux PREEMPT_RT (Preemptible Real-Time) |
 | 「加速」手段 | Hint、uclamp、cpuset | SCHED_FIFO、isolcpus、IRQ 线程优先级 |
 | 突发负载 | Loading boost 2–5s | 控制周期硬期限，不靠短时赌运 |
 | 能效 | EAS + 热墙 | 功耗+实时+功能安全 |
-| 隔离 | cgroup；App 沙箱 | PMP/MMU；AMP 核间隔离 |
+| 隔离 | cgroup；App 沙箱 | PMP (Physical Memory Protection)/MMU (Memory Management Unit)；AMP (Asymmetric Multi-Processing) 核间隔离 |
 
 **迁移要点**：
 
@@ -466,7 +466,7 @@ echo 1 > /sys/kernel/tracing/events/sched/sched_switch/enable
 
 # Part B · SoC 原厂深度：同步 / Monitor / 总线 / Cache
 
-> 目标：能从 **调度里的一把 spinlock** 讲到 **LDXR/STXR → Local/Global Monitor → AXI Exclusive → ACE/CHI Snoop → RTL**。  
+> 目标：能从 **调度里的一把 spinlock** 讲到 **LDXR/STXR → Local/Global Monitor → AXI (Advanced eXtensible Interface) Exclusive → ACE/CHI Snoop → RTL**。  
 > 这是芯片公司 BSP/体系结构与 bring-up 的分水岭。
 
 ---
@@ -481,7 +481,7 @@ echo 1 > /sys/kernel/tracing/events/sched/sched_switch/enable
 | 场景 | 典型锁 | 为何不能睡 |
 |------|--------|------------|
 | `rq->lock`（每 CPU runqueue） | `raw_spinlock` | 持锁时可能关抢占/关中断，不能 schedule |
-| 跨 CPU 操作 runqueue | 双持两把 rq lock | SMP 原子性靠硬件 exclusive |
+| 跨 CPU 操作 runqueue | 双持两把 rq lock | SMP (Symmetric Multi-Processing) 原子性靠硬件 exclusive |
 | 中断关上下文 | `raw_spin_lock_irqsave` | hardirq / softirq 路径 |
 | PREEMPT_RT | 多数 spin → sleeping lock | 仍保留 raw_spin 碰硬件瞬间 |
 
@@ -490,7 +490,7 @@ echo 1 > /sys/kernel/tracing/events/sched/sched_switch/enable
 1. **单指令原子**（`LDADD` / `AMO` 等），或  
 2. **Load-Exclusive / Store-Exclusive 对** + **Monitor 状态机** + **一致性互联的窥探/失效**。
 
-不懂 Monitor/总线，就无法回答：「多核 spinlock 重试时总线上发生了什么？」「锁变量放 Device 行不行？」「DMA 会不会破坏 exclusive？」
+不懂 Monitor/总线，就无法回答：「多核 spinlock 重试时总线上发生了什么？」「锁变量放 Device 行不行？」「DMA (Direct Memory Access) 会不会破坏 exclusive？」
 
 ---
 
@@ -590,7 +590,7 @@ void arch_spin_unlock(arch_spinlock_t *lock)
 
 **LSE** 时可用 `swpal` / `cas` / `ldadd` 等，少了软件重试环，但仍依赖一致性域内的原子语义。
 
-### 14.3 RISC-V：LR/SC 与 AMO
+### 14.3 RISC-V：LR/SC 与 AMO (Atomic Memory Operation)
 
 ```asm
 1:  lr.w    t0, (a0)
@@ -609,7 +609,7 @@ void arch_spin_unlock(arch_spinlock_t *lock)
 | Local/Global Monitor | Reservation + 互连实现 |
 | DMB/DSB | fence |
 
-单核 MCU：常靠核内 reservation；若 CPU+DMA 多 master 共享 SRAM，仍需总线互斥或禁止 DMA 写锁地址。
+单核 MCU：常靠核内 reservation；若 CPU+DMA 多 master 共享 SRAM (Static Random-Access Memory)，仍需总线互斥或禁止 DMA 写锁地址。
 
 ### 14.4 `cpu_relax` 与总线风暴
 
@@ -634,7 +634,7 @@ STXR：仍 Exclusive 且地址匹配 → 尝试系统级提交；否则失败
 
 ### 15.2 Global Monitor（一致性域）
 
-多 PE 对同一 **PA** 做 exclusive 时，需要系统级观察：
+多 PE 对同一 **PA (Physical Address)** 做 exclusive 时，需要系统级观察：
 
 ```
 记录哪些 master 对哪些地址持有 exclusive 兴趣
@@ -744,7 +744,7 @@ M100：无 SMP，同步首选关 `MIE`；多 master（CPU+DMA）仍要总线/约
 
 ### 18.2 SMP（Android 手机）
 
-同 Linux、同一致性域；`rq` 每 CPU 一把锁；迁移靠锁序；IPI（SGI）踢 resched。
+同 Linux、同一致性域；`rq` 每 CPU 一把锁；迁移靠锁序；IPI (Inter-Processor Interrupt)（SGI）踢 resched。
 
 ### 18.3 AMP（Linux + RTOS）
 
@@ -876,8 +876,8 @@ Monitor：表项深度、line 粒度、MasterID 宽、与 snoop 清标顺序、
 | ARM Barrier Litmus | DMB/DSB 与锁 |
 | AMBA AXI4 | LOCK；EXOKAY；见 [`01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) §9 |
 | AMBA ACE / CHI | 一致性与 exclusive |
-| AMBA AHB | **HLOCK**；见 [`01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) §10 |
-| 本 SoC TRM | CCI/DSU/CMN；line size；IO-coherent masters |
+| AMBA AHB (Advanced High-performance Bus) | **HLOCK**；见 [`01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) §10 |
+| 本 SoC TRM (Technical Reference Manual) | CCI/DSU/CMN；line size；IO-coherent masters |
 | RISC-V Spec | LR/SC；AMO；RVWMO |
 
 

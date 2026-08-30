@@ -1,4 +1,4 @@
-# Secure Boot 全链路：RoT、eFuse、HSM 与 OP-TEE
+# Secure Boot 全链路：RoT、eFuse、HSM (Hardware Security Module) 与 OP-TEE
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`03-boot-firmware.md`](03-boot-firmware.md)  
@@ -130,7 +130,7 @@ Certificate {
 
 | 特性 | 说明 |
 |------|------|
-| **写操作** | 需要高压；写前供电准备；写完 IRQ 触发后立即关高压 |
+| **写操作** | 需要高压；写前供电准备；写完 IRQ (Interrupt Request) 触发后立即关高压 |
 | **读操作** | 普通电压，但寿命有限（读 10s+ 次级别 vs 写 ~1s） |
 | **Double-bit** | 防止反转：两个 bit 中任一位为 1 即为 1 |
 | **Block Lock** | 某个 block 写完后可 lock，永久不可改 |
@@ -399,8 +399,8 @@ Hardware TRNG
 | 6 | Pinmux | 引脚复用 |
 | 7 | Stack/Vector | 栈和异常向量 |
 | 8 | Rom patch | 若 eFuse 使能 |
-| 9 | Console | UART 初始化 |
-| 10 | Boot 介质 | eMMC/UFS/UART/SPI/XIP |
+| 9 | Console | UART (Universal Asynchronous Receiver/Transmitter) 初始化 |
+| 10 | Boot 介质 | eMMC/UFS/UART/SPI (Serial Peripheral Interface)/XIP |
 | 11 | Verify & Load BL2 | 验签加载 |
 | 12 | DFU | 升级模式 |
 | 13 | Boot 脚印 | 日志记录 |
@@ -476,14 +476,14 @@ Phase 3: 场景验证
 ### 案例完整版（STAR）
 
 **S（Situation）**：
-Genesys 自研 SoC V100，面向 IoT/AIoT 市场，芯片包含完整 Security 架构：TrustZone + eFuse + HSM + GIC + Secure Boot。芯片 tape-out 前需要完成 Security 相关 IP 的验证 sign-off。
+Genesys 自研 SoC V100，面向 IoT/AIoT 市场，芯片包含完整 Security 架构：TrustZone + eFuse + HSM + GIC (Generic Interrupt Controller) + Secure Boot。芯片 tape-out 前需要完成 Security 相关 IP 的验证 sign-off。
 
 **T（Task）**：
 负责 Security IP 模块级验证，包括 eFuse、HSM、GIC 的验证方案制定、case 开发、问题定位，以及 Secure Boot 场景串联验证。
 
 **A（Action）**：
-1. 制定 IP 验证方案：上电→clock→IRQ→DMA→功能→场景串联
-2. eFuse 验证：用 memory model 模拟真实颗粒，覆盖 read/write/重复写/reset/sync SRAM/block lock
+1. 制定 IP 验证方案：上电→clock→IRQ→DMA (Direct Memory Access)→功能→场景串联
+2. eFuse 验证：用 memory model 模拟真实颗粒，覆盖 read/write/重复写/reset/sync SRAM (Static Random-Access Memory)/block lock
 3. HSM 验证：SPAcc/PKA/TRNG 标准测试向量对比，覆盖 AES/SM4/RSA/ECC/SM2
 4. GIC 验证：Secure/Non-secure 中断分组、优先级、SPI 路由
 5. Secure Boot 场景：全链路 boot + 验签 + rollback + lifecycle 切换
@@ -499,7 +499,7 @@ Genesys 自研 SoC V100，面向 IoT/AIoT 市场，芯片包含完整 Security �
 | 追问 | 回答要点 |
 |------|----------|
 | eFuse 验证最难的点？ | Memory model 模拟真实颗粒行为；lifecycle 切换权限验证 |
-| HSM 遇到什么问题？ | Cache 一致性问题——MMU 配成 Normal 而非 Device，必须 flush |
+| HSM 遇到什么问题？ | Cache 一致性问题——MMU (Memory Management Unit) 配成 Normal 而非 Device，必须 flush |
 | GIC Secure 中断怎么验？ | 配 Group0/Group1，Secure 外设触发，确认 routing 到 EL3 |
 | 验签流程你怎么测？ | 分别测：正确签名通过、篡改 image 拒绝、过期证书拒绝、rollback 拒绝 |
 
@@ -549,12 +549,12 @@ Motorola Android 手机项目（kane/payton/andy 等），使用 Qualcomm 平台
 负责 Core 性能优化、Cache/DMA 验证、HSM Secure Boot 验证、JTAG debug 环境搭建、以及 silicon bug 提前发现。
 
 **A（Action）**：
-1. **CoreMark 性能优化**：TCM 放热点函数、-O3 编译、ICache 调优，CoreMark 达标
+1. **CoreMark 性能优化**：TCM (Tightly-Coupled Memory) 放热点函数、-O3 编译、ICache 调优，CoreMark 达标
 2. **Cache 验证**：I/D Cache hit/miss 分析、cache line 对齐、与 flash/TCM 交互时序
 3. **DMA 验证**：burst 传输效率、channel config bug 定位、HSM DMA latency 分析
 4. **HSM Secure Boot**：K1-K10 密钥 KDF 派生验证、AES-CBC/CMAC 标准向量对比
 5. **Debug 环境**：OpenOCD + GDB + VCS 联合仿真 debug；FPGA JTAG 频率调优
-6. **Bug 发现**：dFlash program + dcache 一致性、dFlash AHB write disable、DMA abort
+6. **Bug 发现**：dFlash program + dcache 一致性、dFlash AHB (Advanced High-performance Bus) write disable、DMA abort
 
 **R（Result）**：
 - 提前发现 10+ silicon bug，避免流片后返工
@@ -570,7 +570,7 @@ Motorola Android 手机项目（kane/payton/andy 等），使用 Qualcomm 平台
 | Cache 一致性问题？ | dFlash program 后 dcache invalidate；DMA 前后 flush/invalidate |
 | HSM DMA 为什么慢？ | 17 拍 latency，对比 flash 取数时序，优化 burst/对齐 |
 | FPGA debug 遇到什么坑？ | JTAG 频率过高录不到波形；128kHz IRC 时钟未灌导致 JTAG 状态机错误 |
-| RISC-V 与 ARM 区别？ | PMP vs MMU、PMA vs MAIR、无 TrustZone 但可有 PMP 保护 |
+| RISC-V 与 ARM 区别？ | PMP (Physical Memory Protection) vs MMU、PMA (Physical Memory Attributes) vs MAIR、无 TrustZone 但可有 PMP 保护 |
 
 ---
 

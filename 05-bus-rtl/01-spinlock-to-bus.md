@@ -1,10 +1,10 @@
-# 从 spin_lock 到总线：AXI Exclusive 与 AHB HLOCK
+# 从 spin_lock 到总线：AXI (Advanced eXtensible Interface) Exclusive 与 AHB (Advanced High-performance Bus) HLOCK
 
 > **系列**：`05-bus-rtl`  
 > **前置**：[`../01-kernel/01-scheduling.md`](../01-kernel/01-scheduling.md) 中的锁与底半部概念  
 > **相关**：[`../01-kernel/04-android-soc-scheduling.md`](../01-kernel/04-android-soc-scheduling.md) · [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)（普通 Load 路径；本文专攻原子/Exclusive）
 
-很多人以为自旋锁会「锁住总线」。在 ARM + **AXI** 上，Linux spinlock 走的是 LDXR/STXR → Exclusive 事务 → Local/Global Monitor，并不锁死整条总线。  
+很多人以为自旋锁会「锁住总线」。在 ARM + **AXI** 上，Linux spinlock 走的是 LDXR/STXR (Load-Exclusive / Store-Exclusive) → Exclusive 事务 → Local/Global Monitor，并不锁死整条总线。  
 经典 **AHB** 则另有一套：`HLOCK` 通过占住 grant 串行化多 master 的 RMW。本文把两条路径都讲清，并对照「各挡的是什么」。
 
 **读完应能**：
@@ -125,7 +125,7 @@ CPU 核心执行 `LDXR/STXR` 时，AXI 总线上的表现如下：
 - 保证**不同 CPU 对同一地址**的 exclusive 访问互斥
 - 当一个 CPU 成功完成 exclusive 写，global monitor 会让其他 CPU 的 local monitor 失效
 
-### 4.3 总线从设备（如 SRAM 控制器）的角色
+### 4.3 总线从设备（如 SRAM (Static Random-Access Memory) 控制器）的角色
 
 - **对于 exclusive 读**：正常返回数据，并记录这个 master 的 exclusive 访问
 - **对于 exclusive 写**：检查从上次 exclusive 读到现在，这块地址有没有被其他 master 写过
@@ -423,7 +423,7 @@ CPU0 ExWr  ................[AW LOCK=1][W][B OKAY]  ← 失败
 ### 9.5 通道交织与 Master 身份（补一句）
 
 - AXI 读写通道独立，允许与其它 master 的 AR/AW **时间重叠**；Monitor 按 **{master/端口, addr}** 记账，不靠霸占整总线。  
-- 多 outstanding 用 `AxID`/`RID`/`BID` 配对；「是谁」通常是 **端口或 AxID 高位**（看 TRM），不是软件 pid。  
+- 多 outstanding 用 `AxID`/`RID`/`BID` 配对；「是谁」通常是 **端口或 AxID 高位**（看 TRM (Technical Reference Manual)），不是软件 pid。  
 - 与 AHB：`HMASTER` 多表示「当前 grant 给了谁」；AXI Exclusive 则是 Monitor 表项，**不阻止对方发 AR/AW**。
 
 ### 9.6 AXI→AHB5 桥：保护位映射（备查）
@@ -450,7 +450,7 @@ assign hprot[1] = axprot[0];     // privilege
 | 其它 master | 等总线 | 仍可访问；同址写会踢 monitor |
 | 成功指示 | 无 EXOKAY | **`EXOKAY` / `OKAY`** |
 | 性能 | 锁总线，易堵 | 更细粒度 |
-| 典型用途 | MCU/DMA 的总线级 RMW | `LDXR/STXR`、Linux spinlock |
+| 典型用途 | MCU/DMA (Direct Memory Access) 的总线级 RMW | `LDXR/STXR`、Linux spinlock |
 
 一句话：**HLOCK 挡的是「换主人」；Exclusive 挡的是「同址独占写还算不算成功」。**
 
@@ -503,7 +503,7 @@ HMASTER    -  -  0  0  0  -  -  1  1  1
 
 ### 10.5 和 MCU / 有 Cache 系统
 
-- **单核**：日常临界区优先关中断；HLOCK 不是 RTOS 互斥主手段。  
+- **单核**：日常临界区优先关中断；HLOCK 不是 RTOS (Real-Time Operating System) 互斥主手段。  
 - **CPU+DMA 改同一控制字**：查 DMA locked 传输 / 硬件互斥 / 协议禁止双边 RMW。  
 - **有 cache 的 A 系列**：软件仍是 LDXR/STXR；总线上可能是 ACE/CHI 一致性报文，不一定裸露 `ARLOCK` 名字；对软件可见的仍是 STXR 成败。
 
