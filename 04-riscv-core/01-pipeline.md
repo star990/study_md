@@ -3,7 +3,7 @@
 > **系列**：`04-riscv-core`  
 > **状态**：草稿  
 > **前置**：无特别前置（实现时建议同步阅读同系列其它篇）  
-> **相关**：[`02-csr-trap.md`](02-csr-trap.md) · [`03-memory-bus.md`](03-memory-bus.md)
+> **相关**：[`02-csr-trap.md`](02-csr-trap.md) · [`03-memory-bus.md`](03-memory-bus.md)（MEM 级连到的访存路径）
 
 规划一颗可实现的 RV core 时，先定级数与数据通路，再处理数据/控制冒险以及 trap 时的冲刷。本文为大纲占位，正文待写。
 

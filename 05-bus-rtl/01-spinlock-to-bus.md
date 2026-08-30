@@ -2,7 +2,7 @@
 
 > **系列**：`05-bus-rtl`  
 > **前置**：[`../01-kernel/01-scheduling.md`](../01-kernel/01-scheduling.md) 中的锁与底半部概念  
-> **相关**：[`../01-kernel/04-android-soc-scheduling.md`](../01-kernel/04-android-soc-scheduling.md) · [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)
+> **相关**：[`../01-kernel/04-android-soc-scheduling.md`](../01-kernel/04-android-soc-scheduling.md) · [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)（普通 Load 路径；本文专攻原子/Exclusive）
 
 很多人以为自旋锁会「锁住总线」。在 ARM + **AXI** 上，Linux spinlock 走的是 LDXR/STXR → Exclusive 事务 → Local/Global Monitor，并不锁死整条总线。  
 经典 **AHB** 则另有一套：`HLOCK` 通过占住 grant 串行化多 master 的 RMW。本文把两条路径都讲清，并对照「各挡的是什么」。

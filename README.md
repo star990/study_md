@@ -16,7 +16,7 @@
         ↓
 03-rtos-bsp        FreeRTOS · 芯片 BSP
         ↓
-04-riscv-core      RV Core（特权/Trap 成文；流水线等草稿）
+04-riscv-core      RV Core（Trap / Load→SRAM 成文；流水线等草稿）
         ↓
 05-bus-rtl         spinlock → AXI Exclusive / AHB HLOCK
         ↓
@@ -25,8 +25,8 @@
 
 | 状态 | 说明 |
 |------|------|
-| 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap` |
-| 草稿 | `04` 其余篇 |
+| 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap`、`03-memory-bus` |
+| 草稿 | `04` 中流水线 / 验证 |
 | 计划 | `06-gtm-ip` |
 
 ---
@@ -83,10 +83,10 @@
 |------|------|------|
 | [01-pipeline.md](04-riscv-core/01-pipeline.md) | 流水线 | 草稿 |
 | [02-csr-trap.md](04-riscv-core/02-csr-trap.md) | **RV 特权级 / CSR / Trap（造核用）** | 成文初版 |
-| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | 访存与主口 | 草稿 |
+| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | **一次 Load：LSU→TLB/PMP→D$→总线→SRAM**（单核→SMP） | 成文初版 |
 | [04-verification.md](04-riscv-core/04-verification.md) | 验证 | 草稿 |
 
-> **分工**：`02-arch-boot` = ARM 主线 + RV 对照；`04-riscv-core` = 以 RISC-V 为本写造核行为。对照表在 `01-exception`；trap 实现骨架在 `02-csr-trap`。
+> **分工**：`02-arch-boot` = ARM 主线 + RV 对照；`04-riscv-core` = 以 RISC-V 为本写造核行为。对照表在 `01-exception`；trap 在 `02-csr-trap`；访存闭环在 `03-memory-bus`。
 
 ### `03-rtos-bsp/`
 
@@ -114,7 +114,7 @@
 3. `01-exception` → `02-gic` → `03-boot-firmware` → `04-security-…`  
 4. `01-freertos-realtime` → `02-bsp-and-boot`  
 5. `04-riscv-core/02-csr-trap`（RV 异常/CSR；对照表仍看 `01-exception`）  
-6. `01-spinlock-to-bus`  
+6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `01-spinlock-to-bus`（原子/Exclusive）  
 7. `04` 其余草稿 → 之后 `06-gtm-ip`
 
 ---

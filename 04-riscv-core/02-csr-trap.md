@@ -2,7 +2,7 @@
 
 > **系列**：`04-riscv-core`  
 > **前置**：可先扫一眼 [`../02-arch-boot/01-exception.md`](../02-arch-boot/01-exception.md) 里的 ARM↔RV 总对照表（迁移用）；本文以 **RISC-V 为本**，面向「这颗 core 要真正做出什么」。  
-> **相关**：[`01-pipeline.md`](01-pipeline.md) · [`03-memory-bus.md`](03-memory-bus.md) · [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md)
+> **相关**：[`01-pipeline.md`](01-pipeline.md) · [`03-memory-bus.md`](03-memory-bus.md)（Load→SRAM 全路径）· [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md)
 
 造一颗 RV core，异常与特权模型是骨架：谁在什么 mode 跑、trap 怎么进、CSR 记什么、中断如何挂上来。ARM 侧对照见架构系列；这里只写 **M-mode 最小可实现集**，并标明以后加 U/PMP 时要扩什么。
 
