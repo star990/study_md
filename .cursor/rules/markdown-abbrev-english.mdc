@@ -1,0 +1,67 @@
+---
+description: Markdown notes must expand abbreviations with English full names on first use
+globs: "**/*.md"
+alwaysApply: true
+---
+
+# Markdown abbreviations (English full name on first use)
+
+When writing or editing any Markdown note in this repo:
+
+1. **On the first appearance of a technical abbreviation in that file**, add the English full name in parentheses immediately after it.
+2. Use **English only** in the parentheses — do **not** add Chinese glosses.
+3. Format: `ABBREV (English Full Name)` or `**ABBREV** (English Full Name)`. Prefer half-width ASCII parentheses `()`.
+4. Do **not** repeat the expansion on later occurrences in the same file.
+5. Skip expansion if that abbreviation is **already** followed by `(...)` with an English expansion in the same file (including earlier edits).
+6. Do not expand inside fenced code blocks (```), inline code with heavy signal noise, or pure filenames/paths where the token is not used as a concept (judgment call: prefer expanding when the term is taught).
+7. Prefer expanding the **longest** match first (e.g. `DTLB` before `TLB`, `ACLINT` before `CLINT` if both appear).
+
+## Examples
+
+```markdown
+# good
+从 LSU (Load/Store Unit) 发起访存；后面再写 LSU 即可。
+PMP (Physical Memory Protection) 查权限；PMA (Physical Memory Attributes) 查属性。
+
+# bad — Chinese inside parentheses
+LSU（Load/Store Unit，加载存储单元）
+
+# bad — expand every time
+… LSU (Load/Store Unit) … 再次 LSU (Load/Store Unit) …
+```
+
+## Common expansions (non-exhaustive)
+
+| Abbrev | English full name |
+|--------|-------------------|
+| LSU | Load/Store Unit |
+| TLB / DTLB / ITLB | Translation Lookaside Buffer / Data TLB / Instruction TLB |
+| MMU | Memory Management Unit |
+| PMP | Physical Memory Protection |
+| PMA | Physical Memory Attributes |
+| ASID | Address Space Identifier |
+| VMID | Virtual Machine Identifier |
+| VA / PA | Virtual Address / Physical Address |
+| VPN / PPN | Virtual Page Number / Physical Page Number |
+| PTE | Page Table Entry |
+| CSR | Control and Status Register |
+| AXI / AHB | Advanced eXtensible Interface / Advanced High-performance Bus |
+| SRAM | Static Random-Access Memory |
+| SMP / AMP | Symmetric Multi-Processing / Asymmetric Multi-Processing |
+| DMA | Direct Memory Access |
+| IRQ / IPI | Interrupt Request / Inter-Processor Interrupt |
+| PLIC / ACLINT / MSIP | Platform-Level Interrupt Controller / Advanced Core Local Interruptor / Machine Software Interrupt-Pending |
+| AMO | Atomic Memory Operation |
+| CMO | Cache Management Operation |
+| TCM / ITCM / DTCM | Tightly-Coupled Memory / Instruction TCM / Data TCM |
+| RTOS | Real-Time Operating System |
+| hart | hardware thread |
+| FSM | Finite State Machine |
+| AGU | Address Generation Unit |
+| TRM | Technical Reference Manual |
+| lr/sc | Load-Reserved / Store-Conditional |
+| GPA / HPA | Guest Physical Address / Host Physical Address |
+| PBMT | Page-Based Memory Types |
+| NC | Non-Cacheable |
+
+When introducing a new abbreviation not listed above, still expand it once with the conventional English full name from the relevant ISA/spec/docs.

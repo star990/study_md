@@ -83,7 +83,7 @@
 |------|------|------|
 | [01-pipeline.md](04-riscv-core/01-pipeline.md) | 流水线 | 草稿 |
 | [02-csr-trap.md](04-riscv-core/02-csr-trap.md) | **RV 特权级 / CSR / Trap（造核用）** | 成文初版 |
-| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | **Load：LSU→TLB/PMP→D$→总线→SRAM**；单核闭环 + SMP | 成文初版 |
+| [03-memory-bus.md](04-riscv-core/03-memory-bus.md) | **Load：LSU→TLB/PMP/PMA→D$→总线→SRAM**；单核闭环 + SMP | 成文初版 |
 | [04-verification.md](04-riscv-core/04-verification.md) | 验证 | 草稿 |
 
 > **分工**：`02-arch-boot` = ARM 主线 + RV 对照；`04-riscv-core` = 以 RISC-V 为本写造核行为。对照表在 `01-exception`；trap 在 `02-csr-trap`；访存闭环在 `03-memory-bus`。
