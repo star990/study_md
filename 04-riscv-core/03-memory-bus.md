@@ -1,17 +1,19 @@
-# RISC-V：一次 Load 从 Core 到 SRAM（Cache / MMU / PMP / 总线）
+# RISC-V：一次 Load 从 Core 到 SRAM（单核 → SMP）
 
 > **系列**：`04-riscv-core`  
 > **前置**：[`02-csr-trap.md`](02-csr-trap.md)（特权级与 trap CSR）；流水线形态见 [`01-pipeline.md`](01-pipeline.md)  
 > **相关**：[`../05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md)（原子/Exclusive）；软件侧页表/DMA 见 [`../01-kernel/02-memory.md`](../01-kernel/02-memory.md)
 
 上一篇总线专文把 **spinlock** 讲到 AXI Exclusive / AHB `HLOCK`。本文换一条更日常的路径：  
-**`lw` 从片上 SRAM 读一个字**——从 LSU 算地址，经 TLB/MMU、PMP、一级 D-cache、总线主口、Bus Matrix，再到 SRAM slave。先 **单核闭环**，再扩到 **SMP** 多出了什么。全文以 **RISC-V** 为本，不展开 ARM。
+**`lw` 从片上 SRAM 读一个字**——从 LSU 算地址，经 TLB/MMU、PMP、一级 D-cache、总线主口、Bus Matrix，再到 SRAM slave。  
+§1–12 先把 **单核** 每一跳端口讲闭环；§13–18 再把 **双 hart SMP** 的复制/共享、无 snoop 失败场景、三条工程出路，以及 `lr`/`sc`、fence、TLB 射齐补齐。全文以 **RISC-V** 为本，不展开 ARM。
 
 **读完应能**：
 - 画出单核 `lw → SRAM` 上每一级模块与端口
 - 分清 Hit / Miss 两条时序，以及 page walk 为何也占总线
 - 说明 VA→PA、PMP、cacheable 属性各自挡在哪一层
-- 指出 SMP 相对单核新增的一致性与原子路径落点
+- 画出双 hart 框图：哪些模块复制、哪些共享，并解释无 snoop 时为何会读到旧值
+- 对照软件一致 / 硬件 snoop / AMP，以及 `lr`/`sc`、`fence`、`sfence.vma` 落在哪一层
 
 ---
 
@@ -29,12 +31,16 @@
 10. [闭环时序 A：D-Cache Hit](#10-闭环时序-ad-cache-hit)
 11. [闭环时序 B：D-Cache Miss + Line Fill](#11-闭环时序-bd-cache-miss--line-fill)
 12. [对照：Store 与 Fence](#12-对照store-与-fence)
-13. [从单核到 SMP](#13-从单核到-smp)
-14. [抓波与断言清单](#14-抓波与断言清单)
-15. [附录 A：裸机无 MMU 的最短路径](#附录-a裸机无-mmu-的最短路径)
-16. [附录 B：异常对照表（Load 相关）](#附录-b异常对照表load-相关)
-17. [小结](#小结)
-18. [自测](#自测)
+13. [从单核到 SMP：总框图与端口增量](#13-从单核到-smp总框图与端口增量)
+14. [SMP 逐层对照：哪些复制、哪些共享](#14-smp-逐层对照哪些复制哪些共享)
+15. [无一致性硬件：三条必挂场景](#15-无一致性硬件三条必挂场景)
+16. [三条工程出路：软件 / snoop / AMP](#16-三条工程出路软件--snoop--amp)
+17. [原子、Fence、TLB 射齐（RV）](#17-原子fencetlb-射齐rv)
+18. [SMP 闭环时序与抓波](#18-smp-闭环时序与抓波)
+19. [附录 A：裸机无 MMU 的最短路径](#附录-a裸机无-mmu-的最短路径)
+20. [附录 B：异常对照表（Load 相关）](#附录-b异常对照表load-相关)
+21. [小结](#小结)
+22. [自测](#自测)
 
 ---
 
@@ -45,13 +51,13 @@
 | 项 | 假设 |
 |----|------|
 | ISA | RV32/RV64；指令 `lw rd, imm(rs1)` |
-| 核 | **单 hart**（§13 再扩 SMP） |
-| Cache | **仅一级 D-cache**（无 L2）；I-cache 存在但不走本路径 |
+| 核 | §1–12：**单 hart**；§13 起：**双 hart SMP**（可推到 N） |
+| Cache | **每 hart 私有一级 D-cache**（无 L2）；I-cache 对称存在但不走本路径 |
 | 目标 | 片上 **SRAM**（Normal、可 cache；非 Device MMIO） |
 | 地址翻译 | 开 **Sv32 / Sv39**（§附录 A 给无 MMU 捷径） |
-| 保护 | **PMP** 开（至少覆盖 SRAM / 外设分区） |
-| 总线 | 数据侧主口用 **AHB-Lite** 或 **AXI4**（两套都写清信号对应） |
-| 一致性 | 单核：无 snoop；SMP：先讲需求，细节链到总线专文 |
+| 保护 | **PMP** 开（每 hart 一份 CSR，配置常镜像） |
+| 总线 | 数据侧主口用 **AHB-Lite** 或 **AXI4**；多 master 进同一 Matrix |
+| 一致性 | 先讲 **无硬件一致** 的失败，再给软件 / snoop / AMP 三条出路 |
 
 > **为何只谈一级 D$**：把「核内 → 总线 → SRAM」每一跳端口讲透；加 L2/CHI 会再多一层，留给后续专题。
 
@@ -552,77 +558,320 @@ AHB 同址则看到 `HADDR` 递增的 `SEQ` 拍。
 
 ---
 
-## 13. 从单核到 SMP
+## 13. 从单核到 SMP：总框图与端口增量
 
-单核路径闭环后，第二个 hart 加入时，**同一套 Port-A…F 仍然存在**，但多了三类问题。
+单核路径（§1–12）对每个 hart **原样成立**。第二个 hart 并不是「再画一条到 SRAM 的线」这么简单——多数模块要 **复制**，少数 **共享**，再多问一句：**两套 D$ 里同一 PA 的数据如何保持同一真相？**
 
-### 13.1 多一套「对称」主口
+### 13.1 双 hart 总框图
 
 ```text
-Hart0: LSU→…→D$0→Master0 ─┐
-                           ├─► Matrix ─► SRAM
-Hart1: LSU→…→D$1→Master1 ─┘
+┌─────────────────────────────┐   ┌─────────────────────────────┐
+│ Hart0                       │   │ Hart1                       │
+│ LSU0 → DTLB0 → PMP0 → D$0   │   │ LSU1 → DTLB1 → PMP1 → D$1   │
+│                 │ Master0   │   │                 │ Master1   │
+└─────────────────┼───────────┘   └─────────────────┼───────────┘
+                  │ Port-D0                         │ Port-D1
+                  └────────────┬────────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │ Bus Matrix / Xbar   │  ← 共享
+                    │ decode + arbiter    │
+                    └──────────┬──────────┘
+                               │ Port-E
+                    ┌──────────▼──────────┐
+                    │ SRAM Controller     │  ← 共享（一份物理真相）
+                    └──────────┬──────────┘
+                               │ Port-F
+                            ┌──▼──┐
+                            │SRAM │
+                            └─────┘
+
+可选：DMA / Debug 再挂 Matrix
+可选：Coherence 互联（snoop 口）挂在 D$ 旁 —— §16
 ```
 
-两套 D$ **默认不共享**。若无一致性硬件：
+### 13.2 端口怎么编号
 
-| 现象 | 原因 |
+| 代号 | SMP 下的变化 |
+|------|----------------|
+| Port-A0 / A1 | 每 hart 私有：LSU↔DTLB |
+| Port-B0 / B1 | 每 hart 私有：PMP 后到本核 D$ |
+| Port-C0 / C1 | 每 hart 私有：本核 D$↔本核 Master |
+| **Port-D0 / D1** | **两条对等主口** 进 Matrix（Master ID 不同） |
+| Port-E / F | **仍共享**；仲裁后串行或 interleaved 访问同一 SRAM |
+
+另增（实现可选）：
+
+| 代号 | 含义 |
 |------|------|
-| Hart0 写了，Hart1 仍读旧值 | Hart1 D$ 仍持有旧 line |
-| 两核写同一行 | 无所有权协议时数据损坏 |
+| **Port-Snoop** | 一致性互联 → 各 D$：Invalidate / Probe / Data 转发 |
+| **Port-IPI** | 核间软中断（RV 上常见 **MSIP** / ACLINT）；不经 SRAM，但配合 TLB 射齐 |
 
-### 13.2 一致性方案（选型级）
+### 13.3 一句分水岭
 
-| 方案 | 适用 |
-|------|------|
-| **软件管理** | 划核私有区；共享区 uncached 或显式 flush |
-| **硬件 snoop / directory** | 应用级 SMP Linux；总线侧 ACE/CHI 等 |
-| **AMP + 邮箱/共享 uncached** | Linux + RTOS 分核（机器人常见） |
-
-本文不展开 snoop 状态机；原子操作与 Monitor 见 spinlock 专文。RV 上多核自旋常落在 **`lr`/`sc` + 保留集**，语义类似 exclusive。
-
-### 13.3 TLB / PMP 在 SMP 上
-
-| 结构 | 注意 |
-|------|------|
-| TLB | **每核一份**；改页表后要 IPI + `sfence.vma` |
-| PMP | 每核 CSR；常镜像同一配置，开机各自写 |
-| `satp` | 每核可不同（跑不同进程时） |
-
-### 13.4 Page walk / DMA 再抢矩阵
-
-SMP + DMA 时，Port-D 竞争明显上升：line fill、PTE walk、DMA、外设同时上场。定带宽与优先级（固定优先 / round-robin / QoS）是芯片集成题，不是 ISA 题。
-
-**本节要点**：SMP 不是「把单核框图复制粘贴」就完——**私有 D$ 强制你回答一致性**；总线从「偶然安静」变成「常态仲裁」。
+> **单核**：D$ 命中 ⇒ 总线可完全安静。  
+> **SMP 无 snoop**：Hart0 的命中 **不能** 代表 Hart1 看到的值；「安静的总线」甚至更危险——旧数据锁在对方 cache 里，SRAM 也被蒙在鼓里。
 
 ---
 
-## 14. 抓波与断言清单
+## 14. SMP 逐层对照：哪些复制、哪些共享
 
-### 14.1 建议探针
+| 层 | 复制 or 共享 | Load 路径影响 |
+|----|--------------|----------------|
+| LSU / 流水线 | **每 hart 一份** | 两核可同时算 VA、同时 stall |
+| DTLB + walker | **每 hart 一份** | 同 VA 可能映到同 PA；改页表要射齐 |
+| `satp` | 每 hart CSR | 可跑不同地址空间；也可同 OS 同 ASID 策略 |
+| PMP | 每 hart CSR | 通常镜像同一区域表；开机各写一遍 |
+| L1 D$ | **每 hart 私有** | **一致性问题的根源** |
+| Bus Master | 每 hart 一（或数）口 | Matrix 看到多 master |
+| Bus Matrix | **共享** | 仲裁、优先级、outstanding |
+| SRAM / 外设从口 | **共享** | 物理只有一份；最终写回落点 |
+| PLIC / ACLINT | 共享外设 | 中断路由、IPI；不在 Load 数据通路上 |
+
+**没有复制的「全局 D$」**——除非你显式做共享 L2；本文仍坚持「仅私有 L1」，把问题暴露清楚。
+
+**本节要点**：SMP 相对单核，Load 的「垂直路径」不变；变的是 **横向多了一套对称路径 + 共享底座**，以及私有 D$ 之间要不要说话。
+
+---
+
+## 15. 无一致性硬件：三条必挂场景
+
+假设：双 hart、**私有 write-back D$、无 snoop、共享区标成 cacheable**。这是教学上最有用的「先看会怎么坏」。
+
+### 15.1 场景 A：写后读（对方仍 hit 旧行）
+
+```text
+初始：行 @PA 在两核都无效；SRAM 中字 = 0
+
+Hart0: sw 1, (x)     // miss→fill→改 D$0，dirty；SRAM 仍可能是 0
+Hart1: lw  y, (x)    // 若也曾 fill 过旧行，或稍后 fill 到旧 SRAM
+                     // → 读到 0，软件以为「写没发生」
+```
+
+时序示意：
+
+```text
+Hart0 D$0:  [line] = 1 (M/Dirty)     SRAM: 0
+Hart1 D$1:  [line] = 0 (E/S) 或稍后从 SRAM fill 到 0
+总线：Hart0 的 sw 可能全程不上总线（WB）
+```
+
+### 15.2 场景 B：双写丢失
+
+```text
+Hart0 / Hart1 都对同一字做 read-modify-write（无锁）
+两边都在自己的 D$ 里改 → 后写回的覆盖先写回的 → 丢更新
+```
+
+即使用 `amoswap`/`amoadd`，若实现把 AMO 拆成「本地 cache 里非原子 RMW」且无保留集/总线锁，同样会坏——见 §17。
+
+### 15.3 场景 C：DMA 与 CPU
+
+```text
+Hart0 填好 buffer（数据在 D$0）
+DMA 从 SRAM 搬 → 读到旧内容
+或 DMA 写入后 Hart0 仍 hit 旧 D$ 行
+```
+
+单核也有 DMA 一致性问题；SMP 只是再乘上「哪个 hart 的 cache」。
+
+### 15.4 波形级直觉（无 snoop）
+
+```text
+Hart0:  SW 成功，Master0 安静（hit + WB）
+Hart1:  LW miss → AR/R 读 SRAM → 得到旧值
+SRAM:   仍是旧值，直到 Hart0 换出 dirty 行才 AW/W
+```
+
+抓波结论：**不能**用「总线上有没有写」判断「别的 hart 该不该看见新值」——在无协议时，真相分裂在多个 D$ 里。
+
+**本节要点**：无硬件一致时，cacheable 共享 = 未定义行为；验证计划里应标为 **禁止**，或强制走 §16 的出路之一。
+
+---
+
+## 16. 三条工程出路：软件 / snoop / AMP
+
+### 16.1 出路 1：软件管理一致性（MCU / 简单 SMP 常用）
+
+| 手段 | 做法 |
+|------|------|
+| **私有分区** | 每 hart 堆栈/堆在不同 PA，禁止 cacheable 共享 |
+| **共享区 uncached** | 页属性 / PMA：Device 或 Non-cacheable；Load/Store 直打 SRAM |
+| **显式 CMO** | 写完 `cbo.clean`/`flush`，读前 `cbo.inval`；或平台 custom CMOs |
+| **消息 + 所有权** | 只在「当前 owner hart」上 cache；移交前 flush |
+
+端口影响：共享变量的 Load **经常走到 Port-D**（不再被 D$ 截断），延迟变高、可预测性变好。
+
+### 16.2 出路 2：硬件 Cache Coherence（应用级 SMP）
+
+在私有 L1 旁增加 **一致性代理**（概念上）：
+
+```text
+D$0 ↔ Snoop/Coherence IF ↔ Interconnect ↔ Snoop/Coherence IF ↔ D$1
+                │
+                └── 仍可经 Memory 口访问 SRAM（目录或总线嗅探）
+```
+
+常见状态直觉（不必死背某一协议名）：
+
+| 状态感 | 含义 |
+|--------|------|
+| Invalid | 本核无有效副本 |
+| Shared | 可读；他核也可能有只读副本 |
+| Exclusive / Modified | 本核可写；他核不得再持有 |
+
+Hart0 `sw` 时，协议保证：先让 Hart1 上同行 **Invalidate**（或拿到数据转发），再完成本地写。  
+Hart1 再 `lw`：miss → 可能从 Hart0 cache **转发**，或从 SRAM（若已写回）取新值。
+
+> 总线协议名（ACE / CHI / TileLink / 自定义）留给总线专题；此处只要建立：**多了一个 Port-Snoop，Load 路径在 miss 时可能根本不进 SRAM。**
+
+### 16.3 出路 3：AMP（非对称）——机器人很常见
+
+```text
+Hart0: Linux，cacheable 大内存
+Hart1: RTOS，紧耦合 TCM / 私有 SRAM 窗
+共享：uncached mailbox + 门铃 IRQ（MSIP/外部中断）
+```
+
+这不是「残缺 SMP」，而是 **刻意不做硬件一致**，用软件契约换确定性。与 [`../03-rtos-bsp/01-freertos-realtime.md`](../03-rtos-bsp/01-freertos-realtime.md) 选型一致。
+
+### 16.4 选型表
+
+| 需求 | 更合适 |
+|------|--------|
+| 双核跑同一 Linux、共享堆 | 硬件 coherence + `lr`/`sc` |
+| 双核 MCU、共享标志位 | uncached 原子区，或关 D$ 的 SRAM 窗 |
+| 大核 Linux + 小核电机 | AMP + mailbox |
+| 只有「偶发共享只读表」 | 只读副本 + 更新时广播 inval |
+
+**本节要点**：一致性是 **产品选择**，不是 Load 路径上自动长出来的；框图里有没有 Port-Snoop，决定 §15 的场景是否合法。
+
+---
+
+## 17. 原子、Fence、TLB 射齐（RV）
+
+### 17.1 `lr` / `sc` 与保留集（Reservation Set）
+
+RISC-V 原子自旋的典型形态：
+
+```text
+1:  lr.w   t0, (a0)       // 保留地址 a0
+    bne    t0, zero, …    // 锁被占则等/重试
+    sc.w   t1, t2, (a0)   // 条件写；t1=0 成功
+    bnez   t1, 1b
+```
+
+和单核普通 `lw`/`sw` 的差异：
+
+| | 普通 Load/Store | `lr`/`sc` |
+|--|-----------------|-----------|
+| 保留集 | 无 | hart 内记下地址（粒度常 ≥ 字，实现定义） |
+| 成功条件 | 无 | 自 `lr` 以来保留集未被「干扰」 |
+| 干扰来源 | — | 本核其它写、**他核写同保留粒度**、部分实现含缓存驱逐等 |
+| 总线 | 普通读写 | 常需 interconnect/monitor 配合（类似 Exclusive） |
+
+细节与「锁不在整条总线」的直觉，见 [`01-spinlock-to-bus`](../05-bus-rtl/01-spinlock-to-bus.md)；RV 把指令叫 `lr`/`sc`，语义同族。
+
+AMO（`amoadd.w` 等）：可在 **本地 cache 在 Modified 时核内完成**，或 **锁住行 / 走总线原子通路**——实现必须保证多核对同址 AMO 的原子性；验证要按 TRM 对波形。
+
+### 17.2 `fence` 在 SMP 上变「真」
+
+```text
+Hart0:  sw  data
+        fence w, w      // 或更宽
+        sw  flag, #1
+
+Hart1:  lw  flag
+        // 旋等到 1
+        fence r, r
+        lw  data        // 期望看到新 data
+```
+
+无 fence、仅靠程序顺序时，写缓冲 / 旁路 / 多口重排可能让 Hart1 先看到 flag、后看到旧 data（取决于内存模型与实现）。  
+**单核强序核**上 fence 常很轻；**SMP** 上它是发布-订阅的契约点。
+
+### 17.3 TLB 射齐：`sfence.vma` + IPI
+
+页表是 **内存里的共享结构**；TLB 是 **每核私有缓存**。
+
+```text
+Hart0（改页表者）:
+  1. 改 PTE（注意自身 D$ / 需要时 fence）
+  2. sfence.vma          // 刷本核 TLB
+  3. 写 mailbox / 发 IPI（MSIP）给其它 hart
+Hart1（收到 IPI）:
+  4. sfence.vma（指定 ASID/地址或全局）
+  5. 应答完成
+Hart0:
+  6. 等待全部应答后，再假定「旧映射已死」
+```
+
+漏射齐的典型故障：Hart1 仍用旧 PPN → 写到已释放物理页（silent corruption）。
+
+### 17.4 PMP 在 SMP
+
+- 每核自己的 `pmpcfg`/`pmpaddr`；**不会自动广播**。  
+- 运行时改 PMP（少见，多在 boot）要对齐所有 hart，否则同 PA 一核能访问、一核 access fault。
+
+**本节要点**：数据一致靠 cache 协议或软件契约；**映射一致**靠 `sfence.vma`+IPI；**互斥**靠 `lr`/`sc`/AMO——三者层次不同，不要混成「一个锁搞定」。
+
+---
+
+## 18. SMP 闭环时序与抓波
+
+### 18.1 双核同时 D$ miss 同一行（无 snoop）
+
+```text
+Hart0 miss fill ──AR──┐
+                      ├─► Matrix 仲裁 ─► SRAM 返回两趟（或 interleaved beats）
+Hart1 miss fill ──AR──┘
+两边各自填入 D$0 / D$1，副本相同（若其间无写）
+之后任一核 sw → 进入 §15 的分裂世界
+```
+
+### 18.2 有 snoop 时：Hart0 写、Hart1 再读（概念序）
+
+```text
+Hart0 sw:
+  1. 查本地状态；若需升级权限 → Probe Hart1
+  2. Hart1：Invalidate 同行（若 dirty 先写回或转发数据）
+  3. Hart0：本地行变 Modified，写入新值
+Hart1 lw:
+  4. miss（已被 inval）
+  5. 向互联要数据 → 可能从 Hart0 转发，或从 SRAM
+  6. 填 D$1，返回 LSU
+```
+
+对比无 snoop：第 2 步不存在 → Hart1 可能一直 hit 旧值。
+
+### 18.3 建议探针（在单核清单上追加）
 
 | 探针 | 看什么 |
 |------|--------|
-| LSU req/resp | VA、stall 原因编码（tlb/pmp/cache/bus） |
-| DTLB | hit/miss、walk 次数 |
-| PMP | fail 与区域号 |
-| D$ | hit/miss、fill 起止、dirty WB |
-| Master AR/R 或 HADDR 流 | 是否行对齐、beat 数是否=line/总线宽 |
-| Matrix grant | 谁在打 SRAM |
-| SRAM HSEL/rdata | 最终数据是否回到 fill buffer |
+| Master0 vs Master1 | 同 PA 的 AR/AW 交错、ID |
+| Matrix grant | 饿死、优先级是否符合实时核需求 |
+| D$0/D$1 tag + 状态 | 无协议时是否双 Modified |
+| Snoop 通道（若有） | Inval 是否先于对端再 hit |
+| MSIP / IPI | TLB 射齐是否成对出现 |
+| `sc` 成败 / AMO | 与他核写同址的因果 |
 
-### 14.2 断言（单核）
+### 18.4 断言清单
 
-1. PMP fail ⇒ 当拍/下一拍 **无** 对该 PA 的 Master 请求。  
-2. D$ hit 的 Load ⇒ 无对应 fill 的 bus 读。  
-3. D$ miss fill ⇒ `ARADDR`/`HADDR` 行对齐；beat 数匹配 line size。  
-4. Walker 读 PTE 的地址落在页表页，且 PMP 允许。  
-5. Slave `ERROR` ⇒ 核侧进入可观测的 fault 路径（与 `mcause` 一致）。
+**单核（保留）**
 
-### 14.3 断言（SMP 起步）
+1. PMP fail ⇒ 无对应 Master 请求。  
+2. D$ hit Load ⇒ 无本次 fill。  
+3. Miss fill ⇒ 行对齐，beat 数匹配。  
+4. Walker PTE 地址合法且过 PMP。  
+5. Slave ERROR ⇒ 可观测 fault。
 
-1. 同一 cacheable 行，两核同时当 owner 写 —— 无协议则必须在验证计划里标为 **禁止场景** 或期望 fail。  
-2. `sfence.vma` 后，本核不得继续用旧 VPN→PPN 映射（除非再 walk）。
+**SMP**
+
+6. **无 snoop 且共享 cacheable**：验证不得依赖「跨核写后读一致性」；或将该区标禁止。  
+7. **有 snoop**：Hart0 写完成后，Hart1 不得再对同行保持有效旧副本（状态机可查）。  
+8. `sfence.vma` 完成后，本核旧 VPN→PPN 不得再命中（除非重新 walk）。  
+9. 两核对同址 `sc`：至多一个成功（保留集/monitor 语义）。  
+10. 实时 hart 的 Matrix 优先级：长 burst（line fill）不得无界挡住其 deadline 路径（产品约束）。
 
 ---
 
@@ -640,6 +889,8 @@ LSU:  addr = rs1+imm     （此时即 PA）
 端口仍在，只是 **砍掉 Port-A 的翻译与 walker**。教学时可先跑通这条，再加 Sv\*。
 
 TCM/ILM/DLM：往往 **不经外部 Bus Matrix**，LSU 旁路到紧耦合 RAM——延迟固定，适合实时。可与「Cacheable SRAM 经矩阵」对照理解。
+
+**双核 MCU**：每核私有 TCM + 共享 uncached SRAM 做 mailbox，是 AMP 的缩略版，常比硬上 snoop 更划算。
 
 ---
 
@@ -663,7 +914,8 @@ Trap 时硬件写 `mepc`/`mtval`/`mcause` 等，见 [`02-csr-trap.md`](02-csr-tr
 - **每个 Port 职责不同**：翻译、权限、缓存、协议、仲裁、从口时序——抓波要对号入座。  
 - Page walk 与 line fill **都会占用总线**；前者读 PTE，后者读数据行。  
 - Store 在 write-back 下可长时间不上总线；顺序靠 `fence` / 平台 CMO。  
-- SMP 复制主口与 D$ 后，核心新增题是 **一致性与 TLB 射齐**，不是再讲一遍 AHB 信号。
+- **SMP**：垂直路径复制为 Port-\*0/\*1，Matrix/SRAM 共享；私有 D$ 迫使你在 **软件一致 / snoop / AMP** 里三选一。  
+- **`lr`/`sc`、fence、`sfence.vma`+IPI** 分别解决互斥、顺序、映射射齐——与「普通 Load 数据通路」分层。
 
 ## 自测
 
@@ -673,9 +925,12 @@ Trap 时硬件写 `mepc`/`mtval`/`mcause` 等，见 [`02-csr-trap.md`](02-csr-tr
 4. PMP 失败会不会在 SRAM 口看到一次 ERROR？为什么？  
 5. 为何软件 Load 4B，miss 时总线可能读 32B？  
 6. Write-back 下 `sw` 成功后，另一 master 读 SRAM 一定看到新值吗？  
-7. 从单核到双核，框图最少要加什么？一致性有哪几类做法？  
-8. 无 MMU 的 MCU 路径去掉了哪一段？TCM 与经 Matrix 的 SRAM 差别？
+7. 画出双 hart 框图：标出复制模块与共享模块；Port-D0/D1 与 Port-E 各是什么？  
+8. 无 snoop 时，Hart0 `sw` 后 Hart1 `lw` 为何可能读到旧值？总线上一定有写吗？  
+9. 软件一致 / 硬件 snoop / AMP 各适合什么产品？共享区 uncached 时 Load 还走 D$ 吗？  
+10. `lr`/`sc`、`fence`、`sfence.vma`+IPI 各解决哪一类问题？  
+11. 无 MMU 的 MCU 路径去掉了哪一段？双核 + 私有 TCM + 共享 mailbox 属于哪条出路？
 
 ---
 
-*`04-riscv-core` · Load 路径：Core → SRAM*
+*`04-riscv-core` · Load 路径：Core → SRAM（单核 → SMP）*
