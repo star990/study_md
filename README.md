@@ -20,14 +20,14 @@
         ↓
 05-bus-rtl         spinlock → AXI Exclusive / AHB HLOCK
         ↓
-06-gtm-ip          （尚未开始）core + SRAM + PWM 控电机 IP
+06-gtm-ip          RTL 基础 ·（计划）core + SRAM + PWM 控电机 IP
 ```
 
 | 状态 | 说明 |
 |------|------|
-| 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap`、`03-memory-bus` |
+| 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap`、`03-memory-bus`；`06` 中 `01-rtl-basics` |
 | 草稿 | `04` 中流水线 / 验证 |
-| 计划 | `06-gtm-ip` |
+| 计划 | `06-gtm-ip` 其余（GTM 架构 / PWM / 集成） |
 
 ---
 
@@ -103,7 +103,11 @@
 
 ### `06-gtm-ip/`
 
-计划中：简易 GTM（core + SRAM + PWM）作为控电机 IP。
+| 文章 | 主题 | 状态 |
+|------|------|------|
+| [01-rtl-basics.md](06-gtm-ip/01-rtl-basics.md) | **RTL 基础**：软件 vs 硬件思维、FF/组合/时序、一拍与流水线、抓波读法 | 成文初版 |
+
+> 后续计划：简易 GTM（core + SRAM + PWM）作为控电机 IP。
 
 ---
 
@@ -115,7 +119,8 @@
 4. `01-freertos-realtime` → `02-bsp-and-boot`  
 5. `04-riscv-core/02-csr-trap`（RV 异常/CSR；对照表仍看 `01-exception`）  
 6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `01-spinlock-to-bus`（原子/Exclusive）  
-7. `04` 其余草稿 → 之后 `06-gtm-ip`
+7. `06-gtm-ip/01-rtl-basics`（RTL 思维打底；写 GTM 前建议先读）  
+8. `04` 其余草稿 → 之后 `06-gtm-ip` 其余
 
 ---
 
