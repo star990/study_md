@@ -11,6 +11,7 @@
 - 解释为何 AXI4 不靠锁总线做 spinlock
 - 画出双核抢锁时 Monitor 与 BRESP 的关系
 - 对比 HLOCK 与 Exclusive 挡的是什么
+- 分清 Local Monitor / cacheable / MESI，以及 AxID、outstanding、bufferable
 
 ---
 ## 目录
@@ -25,10 +26,11 @@
 8. [关键场景推演：没有 Global Monitor 会怎样](#8-关键场景推演没有-global-monitor-会怎样)
 9. [波形：从指令到引脚](#9-波形从指令到引脚)
 10. [对照：AHB HLOCK vs AXI Exclusive](#10-对照ahb-hlock-vs-axi-exclusive)
-11. [附录 A：AxPROT](#附录-aaxprot-保护位含义)
-12. [附录 B：抓波与断言清单](#附录-b抓波与断言清单)
-13. [小结](#小结)
-14. [自测](#自测)
+11. [答疑归纳：Monitor、AxID、outstanding 与 bufferable](#11-答疑归纳monitoraxidoutstanding-与-bufferable)
+12. [附录 A：AxPROT](#附录-aaxprot-保护位含义)
+13. [附录 B：抓波与断言清单](#附录-b抓波与断言清单)
+14. [小结](#小结)
+15. [自测](#自测)
 
 ---
 
@@ -109,12 +111,12 @@ CPU 核心执行 `LDXR/STXR` 时，AXI 总线上的表现如下：
 ### 4.1 Local Monitor（每个 CPU 核心私有）
 
 - 位于 CPU 核心内部，监听该核心的 `LDXR`/`STXR`
-- 记录：上一次 `LDXR` 访问的地址范围
+- 记录：上一次 `LDXR` 访问的**地址范围**（exclusive reservation granule，粒度实现定义，常等于 cache line，但架构上不强制「等于 line」）
 - 当发生以下任一情况时，**monitor 状态从 Exclusive 变为 Open**：
   - 该 CPU 执行了 `STXR` 且成功
-  - 该 CPU 执行了 `STR`/`STXR` 且成功
-  - 其他 CPU 对该地址发起了**任何写事务**（包括非独占写）
-  - 该 CPU 执行了上下文切换相关操作
+  - 该 CPU 执行了 `STR`/`STXR` 且成功（本核对预约地址的任意 store）
+  - 该 CPU 执行了 `CLREX` / 上下文切换等会清预约的操作
+  - **他核写了同一地址**：Local Monitor **本身看不见**别的核；要靠 **cache 一致性 snoop**（cacheable 路径）或 **Global Monitor**（总线侧）把本核预约清掉——详见 [§11.1](#111-local-monitor-必须-cacheable--等于-mesi-吗)
 - `STXR` 执行时，硬件检查 monitor 状态：
   - 仍是 Exclusive → 写放行，`STXR` 返回 0（成功）
   - 已变为 Open → 写被丢弃，`STXR` 返回 1（失败）
@@ -267,6 +269,31 @@ slave → master，返回写传输的完成状态。
 | `11` DECERR | 译码错误（地址无对应 slave） |
 
 > **记住**：`STXR` 是否成功，CPU 看的就是返回的 `BRESP` 是否为 `EXOKAY`。这是 spinlock 与 AXI 协议的交汇点。
+
+### 7.7 AxID 与乱序（核心规则）
+
+**一句话**：AXI「乱序」按 **事务 ID** 分组——**不同 ID 可乱序/交错完成；同一 ID 必须按发单顺序完成**。ID 是标签，响应用同号对回（`ARID`↔`RID`，`AWID`↔`BID`）。
+
+| 规则 | 含义 |
+|------|------|
+| 同 ID | 先发的先完整完成（读含整段 burst 到 `RLAST`） |
+| 不同 ID | 谁先回都可以；读甚至可 **beat 级交错** |
+| 写（AXI4） | 无 `WID`；**W 数据顺序跟 AW 发单顺序**；不同 `AWID` 的 **B 仍可乱序** |
+| 同地址 ≠ 保序 | **不同 ID、同地址，协议仍不保证顺序** |
+
+有先后依赖时：**同 ID**，或 **等前一笔 `R`/`B` 完成再发**，或核侧 `DMB`/`DSB` / 更严内存属性。跨 master 的顺序不靠 AxID，靠锁 / Exclusive / 一致性。Exclusive 成败看 `BRESP`，**不靠 ID 做互斥**。更细答疑见 [§11.2](#112-axid-怎么分配有依赖怎么办)。
+
+### 7.8 Outstanding ≠ Bufferable ≠ Cacheable
+
+三者正交，勿混用：
+
+| 概念 | 层级 | 含义 |
+|------|------|------|
+| **Outstanding** | 总线/事务 | 已发出、尚未完整完成（读等 `RLAST`，写等 `B`）的笔数——「空中飞着几笔」 |
+| **Bufferable** | 内存属性（`AxCACHE` 等） | **允许**写先进缓冲再往后推（可 posted） |
+| **Cacheable** | 内存属性 | 允许进 cache（可 allocate） |
+
+`bufferable` 是**许可**，缓冲可落在 **core store buffer、bridge/互联写队列、内存控制器** 等多层，不是只在 bus。详见 [§11.3](#113-outstanding--bufferable缓冲在哪)。
 
 ---
 
@@ -509,6 +536,73 @@ HMASTER    -  -  0  0  0  -  -  1  1  1
 
 ---
 
+## 11. 答疑归纳：Monitor、AxID、outstanding 与 bufferable
+
+本节把围绕 Exclusive Monitor 与 AXI 流水线的常见追问收成可复习要点（对应上文 §4 / §7 的展开）。
+
+### 11.1 Local Monitor：必须 cacheable？等于 MESI 吗？
+
+**不完全是。**
+
+| 说法 | 对错 | 说明 |
+|------|------|------|
+| Monitor 记录的是「上次 `LDXR` 的地址范围」 | ✅ | 架构说法；粒度 = reservation granule（常≈cache line，非强制） |
+| Monitor **就是** addr 的 cache line + MESI 状态机 | ❌ 过窄 | MESI/MOESI 只是 **cacheable 路径上的常见实现手段** |
+| 地址**必须** cacheable 才能 Exclusive | ❌ | Non-cacheable Normal 也可；跨核靠互联/内存侧 **Global Monitor**（`AxLOCK`），与 MESI 无关 |
+| 多核 spinlock 实务上用 Normal Shareable Cacheable | ✅ | 跨核「被别人动过」常借 snoop/一致性清预约；Global Monitor 可「嵌」在 ACE/CHI 里 |
+| Device 上发 Exclusive | ⚠ | 行为实现定义，软件应避免 |
+
+两层分工：
+
+1. **Local Monitor**：本核 `LDXR` 立预约；本核 store / `CLREX` / 切换等清掉。  
+2. **他核写同址**：cacheable 靠一致性 invalidation/snoop → Local 变 Open；non-cacheable 靠 **Global Monitor** 判 `STXR`（`EXOKAY` vs `OKAY`）。  
+
+只有 Local、没有跨核机制时，双核可同时 `STXR` 成功——见 [§8](#8-关键场景推演没有-global-monitor-会怎样)。
+
+### 11.2 AxID：怎么分配？有依赖怎么办？
+
+**ID 不是每笔唯一流水号**，而是有限标签池的**租用/归还**：
+
+- 位宽固定（如 4bit → 最多 16 个 ID）；响应用完即回收，整条时间线同一 ID 会被反复使用。  
+- 常见策略：按源固定（取指 vs 数据）、按序流共用、outstanding 槽位池；有 RAW/WAW 则同 ID 或等完成。  
+- 互联常把 **master 端口号拼到高位**，回程按 ID 路由。  
+- 池满则反压/停发。许多实现「同 ID 只挂 1 笔 outstanding」——此时同 ID ≈ 必须等前一笔完成。
+
+**有先后依赖、却用了不同 ID**：协议**不管**不同 ID 之间的顺序。避免踩坑：
+
+1. 有依赖 → **同 ID**，或 **等 `RLAST`/`B` 再发下一笔**，或 `DMB`/`DSB` / Device 等更严属性。  
+2. 无依赖 → 才用不同 ID 拉吞吐。  
+3. 勿假设「同地址就保序」；跨 master 更不靠 AxID。
+
+### 11.3 Outstanding ≠ Bufferable：缓冲在哪？
+
+- **Outstanding**：事务还在飞（并发度）。与是否 bufferable/cacheable 正交。  
+- **Bufferable**：属性许可「写可 posted / 进写缓冲」；**不规定**缓冲只画在某一块 RTL。  
+- 缓冲常见落点（可多层并存）：
+
+```
+CPU store
+  → [Core store buffer]      ← 最常见、最贴近「指令已执行但数据未必到设备」
+  → [可选 Cache]             ← 叠 cacheable 时
+  → [互联 / Bridge 写队列]   ← SoC 里也常见
+  → Slave / DRAM 控制器写队列
+```
+
+抓「写完没到外设」：从 **core store buffer** 一路查到桥和控制器，不能默认只在 bus。`BRESP=OKAY` 在 bufferable 路径上**不保证**数据已到最终从设备。
+
+### 11.4 一张表收束
+
+| 问题 | 核心答案 |
+|------|----------|
+| Monitor ≈ MESI line？ | 常见实现可以像；架构上是地址预约 + 状态，跨核还要一致性或 Global Monitor |
+| 必须 cacheable？ | 否；spinlock 实务常 cacheable；non-cacheable 靠 Global Monitor |
+| AXI 乱序靠什么？ | **AxID**：同 ID 保序，不同 ID 可乱序 |
+| ID 每笔都换？ | 否；池内租还、刻意复用保序 |
+| 不同 ID 有依赖？ | 同 ID / 等完成 / 屏障；协议不自动排 |
+| Outstanding = bufferable？ | 否；前者是在飞笔数，后者是写可否缓冲 |
+| Buffer 在哪？ | Core / bridge / 控制器都可能，属性是许可 |
+
+---
 
 ## 附录 A：AxPROT 保护位含义
 
@@ -548,6 +642,9 @@ HMASTER    -  -  0  0  0  -  -  1  1  1
 
 - ARM Linux spinlock 靠 LDXR/STXR + Exclusive，而不是锁住整条 AXI。
 - Local/Global Monitor 决定独占写成败；`BRESP=EXOKAY` 才是拿到锁。
+- Local Monitor ≠ 必然 MESI；跨核靠一致性或 Global Monitor；地址不必必须 cacheable。
+- AXI 乱序按 **AxID**：同 ID 保序，不同 ID 可乱序；ID 是有限池租还，不是每笔唯一号。
+- Outstanding（在飞笔数）≠ Bufferable（写可否缓冲）≠ Cacheable；buffer 可在 core/bridge/控制器。
 - 普通写可踢掉 Monitor；双核可同时 ExRd，但 ExWr 至多一个成功。
 - AHB `HLOCK` 挡的是换 grant；与 Exclusive 不是同一条故事。
 
@@ -558,6 +655,9 @@ HMASTER    -  -  0  0  0  -  -  1  1  1
 3. 没有 Global Monitor 时双核同时 STXR 可能怎样？
 4. Exclusive 读之后被同址 Normal Write 插入，再 STXR 会怎样？
 5. AHB `HLOCK` 与 AXI Exclusive 各挡什么？抓波看哪些信号？
+6. Local Monitor 是否必须挂在 cacheable 地址上？和非 cacheable 路径各靠什么做跨核？
+7. 两笔不同 `ARID` 若有写后读依赖，三种合法做法是什么？
+8. Outstanding、bufferable、cacheable 各管什么？`BRESP=OKAY` 是否等于数据已到外设？
 
 ---
 
