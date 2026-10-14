@@ -2,7 +2,7 @@
 
 > **系列**：`05-bus-rtl`  
 > **前置**：[`../01-kernel/01-scheduling.md`](../01-kernel/01-scheduling.md) 中的锁与底半部概念  
-> **相关**：[`../01-kernel/04-android-soc-scheduling.md`](../01-kernel/04-android-soc-scheduling.md) · [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)（普通 Load 路径；本文专攻原子/Exclusive）
+> **相关**：[`03-axi-ahb.md`](03-axi-ahb.md)（协议信号速查）· [`02-cache.md`](02-cache.md)（Cache 专题）· [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)（普通 Load）· [`../01-kernel/04-android-soc-scheduling.md`](../01-kernel/04-android-soc-scheduling.md)
 
 很多人以为自旋锁会「锁住总线」。在 ARM + **AXI** 上，Linux spinlock 走的是 LDXR/STXR (Load-Exclusive / Store-Exclusive) → Exclusive 事务 → Local/Global Monitor，并不锁死整条总线。  
 经典 **AHB** 则另有一套：`HLOCK` 通过占住 grant 串行化多 master 的 RMW。本文把两条路径都讲清，并对照「各挡的是什么」。
@@ -462,6 +462,8 @@ assign hprot[1] = axprot[0];     // privilege
 // cache/domain → HPROT[2+] 依桥实现，略
 ```
 
+完整 `AxCACHE`/`HPROT`/`AxLOCK` 对照与桥接注意：见 [`03-axi-ahb.md`](03-axi-ahb.md)。
+
 ---
 
 ## 10. 对照：AHB `HLOCK` vs AXI Exclusive
@@ -589,6 +591,8 @@ CPU store
 ```
 
 抓「写完没到外设」：从 **core store buffer** 一路查到桥和控制器，不能默认只在 bus。`BRESP=OKAY` 在 bufferable 路径上**不保证**数据已到最终从设备。
+
+专题展开（MMU↔`AxCACHE`、谁打 bit、1KB/4KB 谱系）：见 [`02-cache.md`](02-cache.md)。
 
 ### 11.4 一张表收束
 
