@@ -1,7 +1,7 @@
 # Embedded Stack Notes
 
 按主题撰写的嵌入式学习库：一篇 Markdown ≈ 一个 topic（长文博客体例）。  
-路径覆盖 **Linux Kernel → 架构/启动 → RTOS (Real-Time Operating System)/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP**。
+路径覆盖 **Linux Kernel → 架构/启动 → RTOS (Real-Time Operating System)/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP → 面试专题**。
 
 面向嵌入式 / BSP / SoC 学习者；可自用，也可直接分享给同伴当复习路径。
 
@@ -21,13 +21,15 @@
 05-bus-rtl         spinlock → AXI Exclusive / AHB HLOCK
         ↓
 06-gtm-ip          RTL 基础 ·（计划）core + SRAM + PWM 控电机 IP
+        ↓
+07-interview       面试题（01-chip-validation · 02-core-bus · 03-bsp-kernel · 04-secure-boot）
 ```
 
 | 状态 | 说明 |
 |------|------|
 | 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap`、`03-memory-bus`；`06` 中 `01-rtl-basics` |
 | 草稿 | `04` 中流水线 / 验证 |
-| 计划 | `06-gtm-ip` 其余（GTM 架构 / PWM / 集成） |
+| 计划 | `06-gtm-ip` 其余（GTM 架构 / PWM / 集成）；`07-interview` 其余真题 |
 
 ---
 
@@ -36,9 +38,10 @@
 1. 按路径从上往下，或只挑当前缺口的一篇。  
 2. 每篇开头有 **系列 / 前置 / 相关 / 读完应能**——先看导语再进正文。  
 3. 造 core 时以 `04` 为主；总线细节看 `05`；对照表在 `02`。  
-4. 新增文章：放入对应目录，文件名 `01-` `02-`…，并更新本索引。
+4. 新增文章：放入对应目录，文件名 `01-` `02-`…，并更新本索引。  
+5. `07-interview` 另有体例：见 [`07-interview/README.md`](07-interview/README.md)（真题记录 + 盲区延伸）。
 
-**体例**（全库统一）：
+**体例**（`01`–`06` 长文）：
 
 ```text
 # 标题
@@ -110,6 +113,17 @@
 | [01-rtl-basics.md](06-gtm-ip/01-rtl-basics.md) | **RTL 基础**：软件 vs 硬件思维、FF/组合/时序、一拍与流水线、抓波读法 | 成文初版 |
 
 > 后续计划：简易 GTM（core + SRAM + PWM）作为控电机 IP。
+
+### `07-interview/` · [系列说明](07-interview/README.md)
+
+**宗旨**：总结面试题，温故而知新。每篇两大块——**真题记录**（真实遇到的有价值题）+ **盲区延伸**（由题牵出的薄弱点补强）；深挖链回 `01`–`06`。
+
+| 文章 | 主题 | 状态 |
+|------|------|------|
+| [`01-chip-validation.md`](07-interview/01-chip-validation.md) | 芯片验证（Q1：帕拉丁长时间偶现） | 收录中 |
+| [`02-core-bus.md`](07-interview/02-core-bus.md) | 核 / 总线（Q1：AXI `rwrwrw` vs `rrrwww`） | 收录中 |
+| [`03-bsp-kernel.md`](07-interview/03-bsp-kernel.md) | BSP / Kernel | 待收录 |
+| [`04-secure-boot.md`](07-interview/04-secure-boot.md) | Secure Boot | 待收录 |
 
 ---
 
