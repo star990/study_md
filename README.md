@@ -1,7 +1,7 @@
 # Embedded Stack Notes
 
 按主题撰写的嵌入式学习库：一篇 Markdown ≈ 一个 topic（长文博客体例）。  
-路径覆盖 **Linux Kernel → 架构/启动 → RTOS (Real-Time Operating System)/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP → 面试专题**。
+路径覆盖 **Linux Kernel → 架构/启动 → RTOS (Real-Time Operating System)/BSP → RISC-V Core → 总线/RTL →（计划）电机 IP → 面试专题 → AI 大 SoC（`08-ai-soc`）**。
 
 面向嵌入式 / BSP / SoC 学习者；可自用，也可直接分享给同伴当复习路径。
 
@@ -23,13 +23,16 @@
 06-gtm-ip          RTL 基础 ·（计划）core + SRAM + PWM 控电机 IP
         ↓
 07-interview       面试题（01-chip-validation · 02-core-bus · 03-bsp-kernel · 04-secure-boot）
+        ↓
+08-ai-soc          AI 大 SoC（01-soc-common · 02-tpu · 03-gpu）
 ```
 
 | 状态 | 说明 |
 |------|------|
 | 成文 | `01` `02` `03` `05`；`04` 中 `02-csr-trap`、`03-memory-bus`；`06` 中 `01-rtl-basics` |
 | 草稿 | `04` 中流水线 / 验证 |
-| 计划 | `06-gtm-ip` 其余（GTM 架构 / PWM / 集成）；`07-interview` 其余真题 |
+| 计划 | `06-gtm-ip` 其余（GTM 架构 / PWM / 集成）；`07-interview` 其余真题；`08-ai-soc` 中 `01`/`03` |
+| 成文初版 | `08-ai-soc` 中 [`02-tpu`](08-ai-soc/02-tpu.md)（架构 vs GPU + 数据流性能） |
 
 ---
 
@@ -125,6 +128,16 @@
 | [`03-bsp-kernel.md`](07-interview/03-bsp-kernel.md) | BSP / Kernel | 待收录 |
 | [`04-secure-boot.md`](07-interview/04-secure-boot.md) | Secure Boot | 待收录 |
 
+### `08-ai-soc/` · [系列说明](08-ai-soc/README.md)
+
+**宗旨**：AI 相关大 SoC——先 `soc-common` 打通片上骨架，再分 `tpu` / `gpu` 两条加速路径；总线/核/启动细节链回 `01`–`06`。扁平一主题一篇 md（同 `07-interview`）。
+
+| 文章 | 主题 | 状态 |
+|------|------|------|
+| [`01-soc-common.md`](08-ai-soc/01-soc-common.md) | SoC 通用（互联、内存层次、功耗热、软件栈分界） | 计划 |
+| [`02-tpu.md`](08-ai-soc/02-tpu.md) | TPU / NPU：架构 vs GPU、数据流与传输性能 | 成文初版 |
+| [`03-gpu.md`](08-ai-soc/03-gpu.md) | GPU 与 AI 算力 | 计划 |
+
 ---
 
 ## 推荐顺序
@@ -136,7 +149,8 @@
 5. `04-riscv-core/02-csr-trap`（RV 异常/CSR；对照表仍看 `01-exception`）  
 6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `05-bus-rtl/03-axi-ahb`（协议速查）→ `01-spinlock-to-bus`（原子）→ `02-cache`（属性与一致性）  
 7. `06-gtm-ip/01-rtl-basics`（RTL 思维打底；写 GTM 前建议先读）  
-8. `04` 其余草稿 → 之后 `06-gtm-ip` 其余
+8. `04` 其余草稿 → 之后 `06-gtm-ip` 其余  
+9. `08-ai-soc`：`01-soc-common` → `02-tpu` / `03-gpu`（按兴趣；两路可对照）
 
 ---
 
