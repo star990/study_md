@@ -191,7 +191,7 @@ Slave（SRAM ctrl / DDRC / 外设桥）
 ### 由 Q1 → 和成文系列的挂钩
 
 - 五通道、ID、outstanding：[`05-bus-rtl/01-spinlock-to-bus.md`](../05-bus-rtl/01-spinlock-to-bus.md) §7、§11。  
-- AXI vs AHB 形态表：[`05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md) §1。
+- AXI vs AHB 形态表：[`05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md) §1；Outstanding/AxID 精炼：同文 [§6.3](../05-bus-rtl/03-axi-ahb.md#63-outstanding与-axid精炼)；验 DMA outstanding：[`01-chip-validation` Q2](01-chip-validation.md)。
 
 ---
 
