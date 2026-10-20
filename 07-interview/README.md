@@ -20,7 +20,7 @@
 
 | 文件 | 主题 |
 |------|------|
-| [`01-chip-validation.md`](01-chip-validation.md) | 芯片验证（Q1：帕拉丁偶现；Q2：DMA outstanding=64） |
+| [`01-chip-validation.md`](01-chip-validation.md) | 芯片验证（Q1：帕拉丁偶现；Q2：DMA outstanding=64；Q3：CWF / Fill Buffer） |
 | [`02-core-bus.md`](02-core-bus.md) | 核 / 总线（已有 Q1：AXI 读写顺序） |
 | [`03-bsp-kernel.md`](03-bsp-kernel.md) | BSP / Kernel |
 | [`04-secure-boot.md`](04-secure-boot.md) | Secure Boot |

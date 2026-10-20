@@ -123,7 +123,7 @@
 
 | 文章 | 主题 | 状态 |
 |------|------|------|
-| [`01-chip-validation.md`](07-interview/01-chip-validation.md) | 芯片验证（Q1：帕拉丁偶现；Q2：DMA outstanding=64） | 收录中 |
+| [`01-chip-validation.md`](07-interview/01-chip-validation.md) | 芯片验证（Q1：帕拉丁偶现；Q2：DMA outstanding=64；Q3：CWF / Fill Buffer） | 收录中 |
 | [`02-core-bus.md`](07-interview/02-core-bus.md) | 核 / 总线（Q1：AXI `rwrwrw` vs `rrrwww`） | 收录中 |
 | [`03-bsp-kernel.md`](07-interview/03-bsp-kernel.md) | BSP / Kernel | 待收录 |
 | [`04-secure-boot.md`](07-interview/04-secure-boot.md) | Secure Boot | 待收录 |

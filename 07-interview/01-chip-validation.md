@@ -1,7 +1,7 @@
 # 芯片验证（Chip Validation）面试题
 
 > **系列**：`07-interview`  
-> **相关**：[`../05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md)（Outstanding / AxID 协议要点）· [`02-core-bus.md`](02-core-bus.md)（核侧 outstanding 场景）
+> **相关**：[`../05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md)（Outstanding / AxID）· [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md)（D$ miss / line fill）· [`02-core-bus.md`](02-core-bus.md)（核侧 outstanding）
 
 收录 CV 向真题；每题保留当场答法，盲区按题号延伸。
 
@@ -35,6 +35,15 @@
 - **参考答 / 自评**：
   - 定义 + 可配比带宽方向对；偏弱处：**「只能波形」太绝对**；缺「如何打满 64」与「第 65 笔不上溢」；读写 outstanding 常分开；带宽对比要控变量。
   - 升级答法见第二块「由 Q2」。
+
+### Q3. 手册写支持 Critical Word First，为何仍像「等整行 fill」？FB 是什么？
+
+- **出处**：Andes D25（RV32）cache 验证；手册 vs 波形不符
+- **原题 / 场景**：手册写 D$ 支持 **Critical Word First（CWF）**；实测 cache 写满后再 load miss——bus 上 critical beat 已到，LSU 仍要等多拍才拿到，分析下来像必须等整条 line。根因：fill 先入 **FB0/FB1**（行宽缓冲）；满则要先刷一条 FB→cache，CWF 旁路被 drain 堵住。厂商后来改成 **idle 时提前刷 FB**，不再等 FB 满。
+- **当场要能答清的两点**：
+  1. FB 是不是实现 CWF 的通用做法？
+  2. 为何一定要 FB——不能 bus 到了直接给 LSU？是不是因为 tag 最小颗粒是 line？
+- **参考答 / 自评**：见第二块「由 Q3」；收口：**CWF 卡死常是 FB 资源/drain，不是「不支持 CWF」**。
 
 ---
 
@@ -115,6 +124,49 @@
 
 **面试收口一句**：慢 slave 把在飞顶到 64 → monitor/断言证明能到且不超过 → 满时 stall 不发第 65 笔并做数据比对；可配则控变量比带宽，并点一句系统取 min。
 
+### 由 Q3 → Fill Buffer 与 Critical Word First
+
+#### 1. 现象链路（验证故事）
+
+```text
+Load miss → 总线按 CWF 回 critical beat（已可见）
+         → 数据先写入 FB0/FB1 对应 offset，并旁路给 LSU   ← CWF 收益在这里
+         → 若 FB 已满：先 drain 一条 FB→cache，再接新 miss
+         → LSU 被 drain 堵住 → 看起来「必须等整行」
+```
+
+**验 CWF 不能只看 bus beat 序**；还要压满 FB、看 drain 与 early forward 是否解耦。Idle drain 是策略优化，协议上仍是「有 FB + 可旁路」。
+
+#### 2. FB 是实现 CWF 的通用做法吗？
+
+**是，主流标配。** 别名：Line Fill Buffer / Refill Buffer；高性能核常拆成 **MSHR（miss 状态）+ data assemble buffer**。
+
+| 角色 | 做什么 |
+|------|--------|
+| **CWF（总线侧）** | critical beat 先回 |
+| **FB（核侧）** | 拼装未完成行、管 miss 事务；critical 到则 **bypass → LSU** 并写入 FB 槽 |
+| **Cache array** | 通常只收「成行 / 状态干净」的写入 |
+
+口诀：**CWF ≠ 无缓冲**；**CWF = 有 FB（或等价物）+ critical 可 early forward**。
+
+#### 3. 为何一定要 FB？不能直接给 LSU？
+
+**可以（也应该）旁路给 LSU——这只服务「当前那一拍 load」；不能替代 FB。**
+
+旁路解决不了的：同行使后续 load/store、write-allocate 合并、多 miss / outstanding（如 FB0/FB1=2 笔在飞）、victim 写回与 hazard、按 bank/行宽写 data RAM 等。**FB 完成行填充事务；bypass 加速当前消费——二者叠加。**
+
+#### 4. 「tag 颗粒度是 line，所以必须 FB」？——偏了
+
+Tag/index 定位 **哪一行**，offset 定位 **行内 word**；critical word 的地址完全够选 FB 槽、写 offset、旁路 LSU。
+
+真正麻烦的是 **半填行直接进主 cache**：per-word valid、半行 hit、替换与在飞 fill 同步、store/原子、ECC 等会把复杂状态打进主 hit 路径。工业界默认：**拼装期放 FB，主 tag 保持简单。**
+
+#### 5. 面试收口
+
+1. FB（/MSHR+data buffer）是 CWF 的载体，不是反面。  
+2. 手册支持 CWF 仍「像等整行」→ 先查 **FB 满 / drain 策略**。  
+3. 必须有 FB：组装未完成行 + 多 miss；early forward 做在 FB 上。瓶颈在「半行进不进主 cache」，不在「tag 认不出 word」。
+
 ---
 
 ## 小结
@@ -128,3 +180,8 @@
 **Q2**  
 5. 验 outstanding：先 **造高在飞**（慢响应），再证 **能到且 ≤MAX**，满时 **stall 不上溢**，并做数据正确性；可配则同条件比带宽。  
 6. 无标准溢出信号；ID 由 master 分配；有效深度 = 路径与 ID 策略取 min。
+
+**Q3**  
+7. CWF 靠 **FB + critical bypass**；FB 满时 drain 可把 CWF「卡成整行等待」。  
+8. 旁路 LSU ≠ 省掉 FB；半行不进主 cache 是为简 hit 路径，不是 tag 找不到 word。  
+9. 验 CWF：看 bus 序 + **压满 FB / drain 策略**。
