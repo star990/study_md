@@ -22,7 +22,7 @@
         ↓
 06-gtm-ip          RTL 基础 ·（计划）core + SRAM + PWM 控电机 IP
         ↓
-07-interview       面试题（01-chip-validation · 02-core-bus · 03-bsp-kernel · 04-secure-boot）
+07-interview       面试题（01-chip-validation · 02-core-bus · 03-bsp-kernel · 04-secure-boot · 05-coding-algo）
         ↓
 08-ai-soc          AI 大 SoC（01-soc-common · 02-tpu · 03-gpu）
 ```
@@ -127,6 +127,7 @@
 | [`02-core-bus.md`](07-interview/02-core-bus.md) | 核 / 总线（Q1：AXI `rwrwrw` vs `rrrwww`） | 收录中 |
 | [`03-bsp-kernel.md`](07-interview/03-bsp-kernel.md) | BSP / Kernel | 待收录 |
 | [`04-secure-boot.md`](07-interview/04-secure-boot.md) | Secure Boot | 待收录 |
+| [`05-coding-algo.md`](07-interview/05-coding-algo.md) | Coding / 算法（Q1：Ring Buffer 读写接口） | 收录中 |
 
 ### `08-ai-soc/` · [系列说明](08-ai-soc/README.md)
 
