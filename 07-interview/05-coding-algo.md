@@ -26,6 +26,20 @@
   4. 返回值约定清楚：成功字节数 / `bool` / 错误码，**满写失败与空读失败**要可区分。
 - **参考答 / 自评**：见第二块；面试加分在 **契约说清**（满策略、线程模型、是否可重入），而不只是 `% N` 转圈。双向链表版见「由 Q1 → 双向链表实现」。
 
+### Q2. 字符串原地倒转（C / RV32 汇编）
+
+- **出处**：嵌入式 coding；常追问「标准库有没有现成的」「汇编怎么写」「`lb` 还是 `lbu`」
+- **原题**：给定以 `'\0'` 结尾的字符串，原地倒转；可用 C，也可要求 RV32 汇编。
+- **常见追问**：
+  1. C 标准库有没有 `strrev`？
+  2. 找尾指针那段汇编在干什么？空串会不会踩坑？
+  3. 为何用 `lbu` 而不是 `lb`？和 C 的 `char *` 是否一致？
+- **当场要点**：
+  1. 双指针：左端与右端交换，直到相遇；不碰结尾 `'\0'`。
+  2. 缓冲区必须可写（栈/数组），不能倒转字符串字面量。
+  3. **ISO C / POSIX 没有**标准 `strrev`；MSVC 等非标准扩展有，glibc/newlib 一般没有——自己写。
+- **参考答 / 自评**：见「由 Q2」；汇编重点是找尾、`bgeu` 结束条件、以及 `lb`/`lbu` 对纯 swap 等价。
+
 ---
 
 ## 二、盲区延伸
@@ -396,6 +410,93 @@ int lq_get(list_queue_t *q, uint8_t *out)
 
 **口述**：对外契约不变；字节流选数组 ring，变长消息才考虑链表；嵌入式优先方案 B。
 
+### 由 Q2 → C 原地倒转
+
+```c
+#include <string.h>
+
+void str_reverse(char *s)
+{
+    char *l = s;
+    char *r;
+    char  t;
+
+    if (!s || !*s)
+        return;
+
+    r = s + strlen(s) - 1;
+    while (l < r) {
+        t = *l;
+        *l = *r;
+        *r = t;
+        l++;
+        r--;
+    }
+}
+```
+
+```c
+char buf[] = "hello";   /* 可写数组；勿用 char *p = "hello" */
+str_reverse(buf);       /* → "olleh" */
+```
+
+**标准库**：`<string.h>` **没有** `strrev` / `strreverse`（ISO C、POSIX 皆无）。部分旧编译器 / MSVC 有非标准 `strrev`；Linux glibc、常见嵌入式 newlib 通常没有。面试答「自己写双指针」即可。
+
+### 由 Q2 → RV32 汇编（`a0` = `s`）
+
+```asm
+# RV32I: reverse NUL-terminated string in place
+    .globl  str_reverse
+    .text
+str_reverse:
+    beqz    a0, .Ldone
+    lbu     t0, 0(a0)
+    beqz    t0, .Ldone          # empty ""
+
+    mv      t1, a0              # left
+    mv      t2, a0
+.Lfind_end:
+    lbu     t0, 0(t2)
+    beqz    t0, .Lgot_end
+    addi    t2, t2, 1
+    j       .Lfind_end
+.Lgot_end:
+    addi    t2, t2, -1          # right = last char
+
+.Lswap:
+    bgeu    t1, t2, .Ldone      # left >= right → stop
+    lbu     t3, 0(t1)
+    lbu     t4, 0(t2)
+    sb      t4, 0(t1)
+    sb      t3, 0(t2)
+    addi    t1, t1, 1
+    addi    t2, t2, -1
+    j       .Lswap
+
+.Ldone:
+    ret
+```
+
+**找尾循环（对应 `while (*r) r++; r--;`）**：`t2` 走到 `'\0'` 后必须 `-1`，才指最后一个有效字符；`'\0'` 本身不参与交换。空串若未在函数开头返回，`t2--` 会退到 `s` 前面——故先判 `!*s`。
+
+**交换**：与 C 双指针相同；地址比较用无符号 `bgeu`/`bltu`。
+
+### 由 Q2 → `lbu` 还是 `lb`？
+
+| | `lb` | `lbu` |
+|--|------|-------|
+| 扩展 | 符号扩展到 32 位 | 零扩展到 32 位 |
+| 内存 `0xFF` | `0xFFFFFFFF` | `0x000000FF` |
+| 再 `sb` 写回 | 只写低 8 位，**两种一样** | 同左 |
+
+对本题「只 swap、不当整数运算」：**`lb` / `lbu` 结果等价**。
+
+- C 接口若是 `char *`（多数工具链里 `char` 有符号），语义上更贴 `lb`。
+- 写 `lbu` 多半是「当原始字节零扩展」的习惯；**不是**因为标准库 reverse 规定如此（库里根本没有标准 reverse）。
+- 库里其它按字节扫描的优化实现（如 `strlen`）常零扩展，那是找 `'\0'` / 模式匹配的实现习惯，不能反推「必须 `lbu`」。
+
+口述收口：swap 用哪个都行；若强调与 `char *` 一致就说 `lb`，若强调无符号字节就说 `lbu`，并点明对本题无功能差别。
+
 ---
 
 ## 小结
@@ -404,4 +505,5 @@ int lq_get(list_queue_t *q, uint8_t *out)
 2. 对外只暴露 `put`/`get` 或 `write`/`read`；返回值区分满、空、短读写。  
 3. 默认手写：**浪费一格 + 满则失败 + 单线程**；追问再升级 SPSC / 2 的幂。  
 4. **双向链表**简化为尾进头出 FIFO：方案 A（`malloc`）与方案 B（节点池）分开展示；字节流仍优先数组 ring。  
-5. 加分点：主动声明契约、短写语义、自测绕回与空满边界、说清数组 vs 链表选型。
+5. **字符串倒转**：标准库无 `strrev`；C / RV32 都是双指针；找尾后 `-1`；`lb`/`lbu` 对纯 swap 等价。  
+6. 加分点：契约、短写、空满自测、数组 vs 链表、以及 `lb`/`lbu` 讲清楚。
