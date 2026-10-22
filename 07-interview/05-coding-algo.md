@@ -40,6 +40,13 @@
   3. **ISO C / POSIX 没有**标准 `strrev`；MSVC 等非标准扩展有，glibc/newlib 一般没有——自己写。
 - **参考答 / 自评**：见「由 Q2」；汇编重点是找尾、`bgeu` 结束条件、以及 `lb`/`lbu` 对纯 swap 等价。
 
+### Q3. 纯圆环链表，求长度（快慢指针）
+
+- **出处**：链表 coding
+- **原题**：给定**首尾相接的圆环**链表（无环外结点）和 `head`，用一步 / 两步两个指针求长度。
+- **当场要点**：`slow` 每次 `next`，`fast` 每次两步；从 `head` 同步出发，每轮 `n++`，**第一次** `slow == fast` 时 `n` 即为环长。
+- **参考答**：见「由 Q3」。
+
 ---
 
 ## 二、盲区延伸
@@ -497,6 +504,38 @@ str_reverse:
 
 口述收口：swap 用哪个都行；若强调与 `char *` 一致就说 `lb`，若强调无符号字节就说 `lbu`，并点明对本题无功能差别。
 
+### 由 Q3 → 纯圆环：第一次相遇的步数即长度
+
+快指针每轮多走 1 步，相对慢指针「多走的距离」第一次凑满一整圈时相遇，轮数 = 节点数。
+
+```c
+typedef struct node {
+    struct node *next;
+} node_t;
+
+int circ_len(node_t *head)
+{
+    node_t *slow, *fast;
+    int n;
+
+    if (!head)
+        return 0;
+    if (head->next == head)
+        return 1;
+
+    slow = head;
+    fast = head;
+    n = 0;
+    do {
+        slow = slow->next;
+        fast = fast->next->next;
+        n++;
+    } while (slow != fast);
+
+    return n;
+}
+```
+
 ---
 
 ## 小结
@@ -506,4 +545,5 @@ str_reverse:
 3. 默认手写：**浪费一格 + 满则失败 + 单线程**；追问再升级 SPSC / 2 的幂。  
 4. **双向链表**简化为尾进头出 FIFO：方案 A（`malloc`）与方案 B（节点池）分开展示；字节流仍优先数组 ring。  
 5. **字符串倒转**：标准库无 `strrev`；C / RV32 都是双指针；找尾后 `-1`；`lb`/`lbu` 对纯 swap 等价。  
-6. 加分点：契约、短写、空满自测、数组 vs 链表、以及 `lb`/`lbu` 讲清楚。
+6. **纯圆环长度**：快慢指针从 `head` 同出，第一次相遇时的步数即长度。  
+7. 加分点：契约、短写、空满自测、数组 vs 链表、以及 `lb`/`lbu` 讲清楚。

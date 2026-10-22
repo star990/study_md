@@ -127,7 +127,7 @@
 | [`02-core-bus.md`](07-interview/02-core-bus.md) | 核 / 总线（Q1：AXI `rwrwrw` vs `rrrwww`） | 收录中 |
 | [`03-bsp-kernel.md`](07-interview/03-bsp-kernel.md) | BSP / Kernel | 待收录 |
 | [`04-secure-boot.md`](07-interview/04-secure-boot.md) | Secure Boot | 待收录 |
-| [`05-coding-algo.md`](07-interview/05-coding-algo.md) | Coding / 算法（Q1：Ring Buffer；Q2：字符串倒转 C/RV32） | 收录中 |
+| [`05-coding-algo.md`](07-interview/05-coding-algo.md) | Coding / 算法（Q1：Ring Buffer；Q2：字符串倒转；Q3：圆环长度） | 收录中 |
 
 ### `08-ai-soc/` · [系列说明](08-ai-soc/README.md)
 
