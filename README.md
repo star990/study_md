@@ -10,7 +10,7 @@
 ## 学习路径
 
 ```text
-01-kernel          调度 · 内存 · 死机 · Android/SoC 工程
+01-kernel          启动 · 调度 · 内存 · 死机 · Android/SoC 工程
         ↓
 02-arch-boot       异常·GIC·启动·Security（含 ARM↔RV 对照）
         ↓
@@ -67,6 +67,7 @@
 | [02-memory.md](01-kernel/02-memory.md) | 伙伴/slab、页表、DMA (Direct Memory Access) 与 cache 一致性 |
 | [03-crash-debug.md](01-kernel/03-crash-debug.md) | oops / panic / hung、crash 与 tracing |
 | [04-android-soc-scheduling.md](01-kernel/04-android-soc-scheduling.md) | Android/SoC 调度工程；Part B 链到总线专文 |
+| [05-start-kernel.md](01-kernel/05-start-kernel.md) | U-Boot 装载 Image/DTB、ARM64 early boot 落点、`start_kernel`、首进程切用户态；SMP bring-up |
 
 ### `02-arch-boot/`
 
@@ -115,9 +116,9 @@
 
 ## 推荐顺序
 
-1. `01-scheduling` → `02-memory` → `03-crash-debug`  
+1. `01-scheduling` → `02-memory` → `03-crash-debug`（启动总览可并行看 `05-start-kernel`）  
 2. `04-android-soc-scheduling`（产品侧，按需）  
-3. `01-exception` → `02-gic` → `03-boot-firmware` → `04-security-…`  
+3. `01-exception` → `02-gic` → `03-boot-firmware` → `04-security-…`（固件链可与 `05-start-kernel` 对照）  
 4. `01-freertos-realtime` → `02-bsp-and-boot`  
 5. `04-riscv-core/02-csr-trap`（RV 异常/CSR；对照表仍看 `01-exception`）  
 6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `05-bus-rtl/03-axi-ahb`（协议速查）→ `01-spinlock-to-bus`（原子）→ `02-cache`（属性与一致性）  
