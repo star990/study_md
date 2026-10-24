@@ -304,12 +304,12 @@ trap_handler:
 | | ARM | RISC-V |
 |--|-----|--------|
 | 存在？ | **有**，独立 nFIQ 引脚 | **无** FIQ 概念 |
-| 用途 | TrustZone Secure 中断（Group0） | 无 Secure 中断分级 |
+| 用途 | TrustZone：Group0 与（在 NS 侧）Secure Group1 等以 FIQ 进 EL3 | 无 Secure 中断分级 |
 | 独立向量？ | VBAR + 0x100/0x300 | 无 |
 | 更多 banked 寄存器？ | ARMv7 时代有，v8 缩小差距 | N/A |
 | 近似替代 | — | **CLIC** 中断级别（level）可设高优先级快速响应 |
 
-> **要点**：FIQ 是 ARM 特有，TrustZone 用它路由 Secure 中断到 EL3。RISC-V 没有 FIQ/IRQ 二分，所有外部中断走 PLIC，M-mode 统一处理或通过 `mideleg` 委托 S-mode。
+> **要点**：FIQ 是 ARM 特有；典型配置 `SCR_EL3.FIQ=1` 时，Secure 相关中断以 FIQ 进 BL31，Linux 不处理 FIQ。细节（Group 分流、IAR 伪 ID 1020/1021、上下文保存与回程）见 [`02-gic.md`](02-gic.md) §2.4。RISC-V 没有 FIQ/IRQ 二分，所有外部中断走 PLIC，M-mode 统一处理或通过 `mideleg` 委托 S-mode。
 
 ### 4. SError（System Error）
 
@@ -401,6 +401,19 @@ ARM TrustZone:                    RISC-V 安全模型:
 | 路径：CA→Driver→**SMC**→BL31→OP-TEE | 路径：App→**ECALL**→OpenSBI/M-mode |
 | SCR_EL3.NS 位切换 | 无 world，始终同一地址空间 |
 
+### 中断驱动的 World 切换（对照主动 SMC）
+
+两条进 EL3 的路径都要保存/恢复 `cpu_context`，但触发不同：
+
+| | 主动 SMC（CA→TA / PSCI） | Secure IRQ（跑 Linux 时） |
+|--|-------------------------|---------------------------|
+| 触发 | 同步 `SMC` 指令 | 异步 **FIQ** |
+| 入口 | Sync 向量 | FIQ 向量 |
+| 目的 | 主动请求 Secure 服务 | 处理 Secure 外设事件 |
+| Linux 是否发起 | 是 | **否**（通常看不见） |
+
+进 EL3 时：硬件写 `ELR_EL3`/`SPSR_EL3`；BL31 再把通用寄存器等写入 NS `cpu_context`。从 TEE 回 NS 也不能 S-EL1 直 `ERET`，须再 `SMC` 经 BL31 restore NS 后 `ERET`。完整流程图与 **1020/1021** 见 [`02-gic.md`](02-gic.md) §2.4。
+
 ---
 
 ## 1.9 内存屏障（DMB / DSB / ISB）
@@ -460,6 +473,7 @@ fence iorw, ow;   /* 或 __asm__ volatile ("fence w,w") */
 - 同步异常与 IRQ/FIQ/SError 原因与返回路径不同；RV 侧用 mcause + 单入口分发。
 - 关键寄存器要能对照：VBAR↔mtvec，ESR↔mcause，FAR↔mtval。
 - TrustZone 世界切换与 RV 的 PMP/ECALL 是不同隔离模型，不要硬一一对应。
+- World 切换有两条：主动 **SMC**，以及 Secure/对端中断经 **FIQ→EL3**（细节在 GIC 篇）。
 
 ## 自测
 
@@ -468,6 +482,7 @@ fence iorw, ow;   /* 或 __asm__ volatile ("fence w,w") */
 3. SCR_EL3 管什么？RV 侧近似手段？
 4. VBAR 与 mtvec 的结构差异？
 5. TrustZone 切换时 TLB (Translation Lookaside Buffer)/缓存直觉上要注意什么？
+6. Secure IRQ 进 EL3 与主动 SMC 进 EL3：触发、入口、是否 Linux 发起，有何不同？
 
 ---
 

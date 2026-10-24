@@ -2,14 +2,16 @@
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`01-exception.md`](01-exception.md)  
-> **相关**：[`03-boot-firmware.md`](03-boot-firmware.md)
+> **相关**：[`03-boot-firmware.md`](03-boot-firmware.md) · [`04-security-secureboot-tee.md`](04-security-secureboot-tee.md)
 
-从外设到 CPU 的中断旅程：Distributor / Redistributor、Group、SPI (Shared Peripheral Interrupt)/PPI (Private Peripheral Interrupt)/SGI (Software Generated Interrupt)，以及和 RISC-V PLIC/CLIC、Linux 中断框架的对应关系。
+从外设到 CPU 的中断旅程：Distributor / Redistributor、Group、SPI (Shared Peripheral Interrupt)/PPI (Private Peripheral Interrupt)/SGI (Software Generated Interrupt)，以及和 RISC-V PLIC/CLIC、Linux 中断框架的对应关系。重点补齐 **TrustZone 下 Secure 中断**（Group0 / Secure Group1、FIQ→EL3、IAR 伪 ID 1020/1021）。
 
 **读完应能**：
 - 描述一次 SPI 从触发到 ISR 的路径
 - 说明 GICv3 相对 v2 的要点
 - 对照 PLIC 的 claim/complete
+- 口述「Linux 跑着来了 Secure IRQ」的完整路径（含上下文保存与回程）
+- 说明 1020 / 1021 / 1023 各自含义
 
 ---
 ## GICv3 中断控制器
@@ -73,14 +75,102 @@ ARM GIC:                           RISC-V PLIC:
 
 ## 2.4 中断 Group 与安全 — RISC-V 无此概念
 
-| ARM GIC Group | 安全属性 | RISC-V |
-|---------------|----------|--------|
-| Group 0 (Secure) | FIQ → EL3 | **无**；所有 IRQ 进 M-mode 或委托 S-mode |
-| Group 1 NS | IRQ → Linux | PLIC → `mideleg` → S-mode → Linux |
+GICv3 在启用 Security 时，每个 INTID 属于三类之一（由固件配 `GICD_IGROUPR` / `GICD_IGRPMODR`，**不是**「某一个固定 Secure 中断号」）：
 
-> **遗留 Q1 对照**：ARM Secure/NS 中断由 RTL+GIC+SCR_EL3 三层决定。RISC-V 无 Secure 中断，HSM 安全靠 **PMP (Physical Memory Protection) 禁止 S-mode 访问** + 仅 M-mode 驱动 HSM。
+| ARM GIC Group | 谁处理 | 在 NS 世界信号 | RISC-V |
+|---------------|--------|----------------|--------|
+| **Group 0** | **EL3**（BL31 / Monitor） | 始终 **FIQ (Fast Interrupt Request)** | **无**；所有 IRQ 进 M-mode 或委托 S-mode |
+| **Secure Group 1** | **S-EL1**（OP-TEE / Trusted OS） | 在 NS 侧表现为 **FIQ**（先到 EL3 再转交） | 无 |
+| **NS Group 1** | **NS-EL1**（Linux） | **IRQ** | PLIC → `mideleg` → S-mode → Linux |
 
-> **遗留 Q2 对照**：ARM FIQ 给 EL3 处理，Linux 不处理 FIQ。RISC-V 无 FIQ；若 M-mode 处理某 IRQ，S-mode Linux 同样看不到——需 `mideleg` 把外设 IRQ 委托给 S-mode。
+> **怎么决定配 0 还是 1**：看 ISR 写在哪一层。BL31/平台固件 → Group 0；OP-TEE Secure 驱动 → Secure Group 1；Linux → NS Group 1。平台在 ATF (Arm Trusted Firmware) 启动时按 SoC 手册配好，Linux 一般改不了 Secure 分组。
+
+> **遗留 Q1 对照**：ARM Secure/NS 中断由 RTL+GIC+`SCR_EL3` 三层决定。RISC-V 无 Secure 中断，HSM 安全靠 **PMP (Physical Memory Protection) 禁止 S-mode 访问** + 仅 M-mode 驱动 HSM。
+
+> **遗留 Q2 对照**：ARM 下 Secure 相关中断以 FIQ 进 EL3，Linux 不处理 FIQ。RISC-V 无 FIQ；若 M-mode 处理某 IRQ，S-mode Linux 同样看不到——需 `mideleg` 把外设 IRQ 委托给 S-mode。
+
+### 2.4.1 典型路由配置（面试常用）
+
+BL31 在进入 NS 前通常配：
+
+- `SCR_EL3.FIQ=1` → FIQ 进 **EL3**
+- `SCR_EL3.IRQ=0` → 普通 IRQ 仍给当前 NS 侧（Linux）
+
+效果：跑 Linux 时，**Group 0 / Secure Group 1** 都以 FIQ 形式打进 BL31；**NS Group 1** 走 Linux IRQ 向量。Linux 的 `DAIF.I` mask 不住这条 FIQ 路由。
+
+### 2.4.2 场景：Linux 跑着来了 Secure 中断
+
+**关键纠正**：不是 Linux 发 `SMC` 切过去。Secure 中断是**异步 FIQ→EL3**；`SMC` 是同步主动调用（CA→TA / PSCI）。
+
+```
+Secure 外设 pending（Group0 或 Secure Group1）
+    → GICD 仲裁、路由到目标 CPU
+    → CPU Interface 以 FIQ 通知
+    → SCR_EL3.FIQ=1 → 异常进 EL3（BL31 VBAR FIQ 入口）
+    → Linux IRQ 向量不会走到
+```
+
+**上下文必须保存**（否则回不了 Linux）：
+
+| 谁 | 保存什么 |
+|----|----------|
+| **硬件** | `ELR_EL3`←被打断 PC；`SPSR_EL3`←PSTATE；切到 `SP_EL3` |
+| **BL31 软件** | 通用寄存器等写入该核的 **NS `cpu_context`**（与主动 SMC 进 Monitor 同一套 Context lib） |
+
+EL3 之后按 Group 分流：
+
+```
+读 ICC_IAR0_EL1
+  ├─ 真实 INTID     → Group 0：BL31 本地处理 → EOI → restore NS → ERET 回 Linux
+  ├─ 1020           → Secure Group1：切 Secure → ERET 进 OP-TEE
+  │                    （真正 INTID 由 TEE 再读 ICC_IAR1_EL1 ACK）
+  └─ 1023           → spurious：不 EOI，直接返回
+```
+
+### 2.4.3 TEE 处理完如何回 Linux
+
+S-EL1 **不能**直接 `ERET` 到 NS；必须再经 EL3：
+
+```
+OP-TEE 处理完（IAR1 ACK → ISR → EOI）
+    → SMC（yield / return-to-NW，如 OPTEE_SMC_RETURN_ON_IRQ 一类 FID）
+    → BL31 SPD (Secure Payload Dispatcher) 识别「Secure IRQ 做完」
+    → 保存 Secure context；restore 当初 FIQ 时存的 NS context
+    → SCR_EL3.NS=1；ERET
+    → Linux 从被打断处继续
+```
+
+| 路径 | 进 Secure | 回 Linux 恢复的是 |
+|------|-----------|-------------------|
+| Secure IRQ 打断 Linux | FIQ→EL3 | **FIQ 时**那份 NS context |
+| Linux 主动 `SMC` 调 TA | Sync→EL3 | **该次 SMC 时**那份 NS context |
+
+### 2.4.4 伪中断 ID：1020 / 1021 / 1022 / 1023
+
+读 IAR (Interrupt Acknowledge Register) 时 1020–1023 是**保留特殊码**，不是外设 SPI 连线号。在 `SCR_EL3.FIQ=1` 下，EL3 读 **`ICC_IAR0_EL1`** 常见：
+
+| ID | 含义 | EL3 该做什么 |
+|----|------|----------------|
+| **1020** | 最高优先级 pending = **Secure Group 1** | **切到 Secure**（Trusted OS）；真正 INTID 留给 S-EL1 的 IAR1 |
+| **1021** | 最高优先级 pending = **NS Group 1** | **切到 NS**（Linux）；真正 INTID 留给 NS 的 IAR1 |
+| **1022** | Legacy | 现代路径基本不碰 |
+| **1023** | Spurious（真伪中断） | 无可 ACK 中断；**不要 EOI** |
+
+一句话：**1020/1021 ≈ 通过 IAR 告诉 EL3「该切 S/NS world」的信令**（EL3 不能错误 ACK 属于另一 world 的外设中断）；**1023** 才是狭义 spurious。
+
+对称场景（TEE 跑着、Linux 中断来了）：
+
+```
+OP-TEE (Secure) → NS Group1 pending → FIQ→EL3
+  → IAR0 得 1021 → 保存 Secure context → 切 NS → ERET 回 Linux
+  → Linux 读 IAR1，ACK 真正 INTID
+```
+
+这与「TEE 主动 SMC 回 Linux」不同：这是 **NS 中断抢占 Secure**，由 **1021** 驱动切回。
+
+### 2.4.5 面试口述模板
+
+> Linux 跑在 Non-secure 时，Secure 中断被配成 Group0 或 Secure Group1，以 FIQ 经 `SCR_EL3.FIQ` 进 BL31；硬件记 PC/PSTATE，BL31 再存 NS `cpu_context`。读 `ICC_IAR0_EL1`：真 INTID 则 EL3 自处理；**1020** 则切 OP-TEE，由 TEE 用 IAR1 ACK。TEE 做完再 SMC 回 BL31，restore NS 后 `ERET`。Linux 只处理 NS Group1 的 IRQ，一般碰不到这条路径。**不是** Linux 发 SMC 去接 Secure IRQ。
 
 ---
 
@@ -181,15 +271,18 @@ uart0: serial@10000000 {
 - GIC 把「外设事件」变成「可被 CPU 认领的中断」；v3 强化了 redistributor 与 ITS 等扩展。
 - SGI/PPI/SPI 与 RV 的软中断/定时器/PLIC IRQ 可对照记忆。
 - 生命周期要能走到 Linux 的 handler：ack → 处理 → eoi/complete。
-- 安全分组是 ARM 特色；RV 常用 PMP 等保护 Secure 资源。
+- 安全分组是 ARM 特色：Group0→EL3，Secure Group1→TEE，NS Group1→Linux；RV 常用 PMP 等保护 Secure 资源。
+- Secure IRQ 路径是 **FIQ→EL3**（不是 Linux SMC）；1020/1021 是 IAR 上的切 world 信令，1023 是真伪中断。
 
 ## 自测
 
 1. GICv3 相对 v2 你认为最重要的两点？
 2. SGI / PPI / SPI 各举一例用途，并对照 RV。
-3. Group0/Group1 在安全模型里大致意味着什么？
+3. Group0 / Secure Group1 / NS Group1 分别谁处理？如何决定配哪一类？
 4. 口述一次 SPI 从外设到 ISR 的步骤。
 5. IAR/EOIR 与 PLIC Claim/Complete 如何对应？
+6. Linux 跑着来了 Secure Group1：从 FIQ 到回 Linux 的步骤？为何不是 SMC？
+7. 读 `ICC_IAR0_EL1` 得到 1020 / 1021 / 1023 各意味着什么？
 
 ---
 
