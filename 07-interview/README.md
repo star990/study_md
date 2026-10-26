@@ -24,7 +24,7 @@
 | [`02-core-bus.md`](02-core-bus.md) | 核 / 总线（已有 Q1：AXI 读写顺序） |
 | [`03-bsp-kernel.md`](03-bsp-kernel.md) | BSP / Kernel |
 | [`04-secure-boot.md`](04-secure-boot.md) | Secure Boot |
-| [`05-coding-algo.md`](05-coding-algo.md) | Coding / 算法（Q1：Ring Buffer；Q2：字符串倒转；Q3：圆环长度） |
+| [`05-coding-algo.md`](05-coding-algo.md) | Coding / 算法（Q1：Ring Buffer；Q2：字符串倒转；Q3：圆环长度；Q4：冒泡） |
 
 新题追加到对应主题 md 的 `Q2` `Q3`…，并更新仓库根 [`README.md`](../README.md) 索引。
 
