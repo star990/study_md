@@ -2,7 +2,7 @@
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`03-boot-firmware.md`](03-boot-firmware.md)  
-> **相关**：[`01-exception.md`](01-exception.md)
+> **相关**：[`01-exception.md`](01-exception.md) · [`02-gic.md`](02-gic.md)（§2.4 Secure 中断 / 1020·1021）
 
 从信任根到应用的安全启动与运行时隔离：证书链、eFuse 生命周期、HSM、Secure Debug，再用项目案例串起来，最后补 OP-TEE / SMC 接口层。
 
@@ -616,6 +616,7 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 - HSM/KDF 等是「密钥与算法落地」的硬件边界，验证要有标准向量。
 - 项目案例用来练「现象→根因→手段→结果」的叙述，而不是背型号。
 - OP-TEE 经 SMC 待在 Secure 世界，CA/TA 与共享内存是接口层重点。
+- **Secure 中断**不是 Linux 主动 SMC：FIQ→BL31，IAR 伪 ID **1020** 驱动切 TEE、**1021** 驱动切回 Linux；Group0/Secure Group1/回程细节见 [`02-gic.md`](02-gic.md) §2.4。GIC 验证口述可对齐该节。
 
 ## 自测
 
@@ -624,6 +625,7 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 3. Anti-rollback 比较的是哪两边？
 4. CA 调用到 TA 的路径经过哪些层次？
 5. IP 验证常用哪三阶段？各解决什么风险？
+6. Linux 跑着来了 Secure Group1 中断：和 CA→SMC→TA 路径差在哪？1020 扮演什么角色？
 
 ---
 
