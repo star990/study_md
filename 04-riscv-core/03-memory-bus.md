@@ -637,6 +637,8 @@ lw 触发 DTLB miss
 | 失败是总线 ERROR 吗？     | 权限/无效页 → **page fault**；真总线挂了才可能 access/bus fault  |
 
 
+> ARM 上这两类访问的属性来源不同：CPU 显式访问看 leaf PTE 的 `AttrIndx → MAIR_EL1`，walker 读表看 `TCR_EL1 / VTCR_EL2`。两套配置必须一致，详见附录 D.5。
+
 所以波形上常见两种「读」搅在一起：
 
 ```text
@@ -1747,6 +1749,69 @@ ARM 文档里的 Data/Instruction Abort，在 Linux 里仍归到 page fault / pe
 ### D.4 缓存索引旁注（可选）
 
 有人会提 **VIPT / PIPT**（D$ 用 VA 还是 PA 做 index）。它影响别名与颜色页，**不改变**「TLB miss → 硬件 walk → 再访存」的主序；造核时若做 VIPT，要额外处理同色别名，本文不展开。
+
+### D.5 页表页的 cache 属性：MAIR vs TCR（核心速查）
+
+同一次「读页表」有两套属性配置，作用对象不同，**必须一致**：
+
+```text
+CPU 写/读 PTE（显式访问）
+  VA → PA → leaf PTE.AttrIndx[4:2] → MAIR_EL1 → cache 属性
+
+walker 读 PTE（隐式访问）
+  PA（上层 PPN 拼出）→ TCR_EL1 / VTCR_EL2（IRGN/ORGN/SH）→ cache 属性
+```
+
+| 问题 | 答案 |
+|------|------|
+| walker 读 PTE 走 D$ 吗？ | 可走：命中 L1 D$ / L2 / walk cache；也可走专用 PT cache 或 uncached 路径（实现定义） |
+| walker 的属性谁定？ | `TCR_EL1`（Stage1）/ `VTCR_EL2`（Stage2）；**不看 MAIR**，也不看「页表页自己的那条 PTE」 |
+| CPU 写 PTE 的属性谁定？ | 映射页表页的那条 leaf PTE 的 `AttrIndx` → `MAIR_EL1` |
+| 两套不一致会怎样？ | 同一物理页被两种内存类型访问：walker 可能读到旧 PTE / 看不到新 PTE，必须避免 |
+
+**MAIR_EL1**：8 个 8-bit 槽，PTE[4:2] 选槽。
+
+```text
+Device（Attr[7:4]==0）：0x00 nGnRnE / 0x04 nGnRE / 0x08 nGRE / 0x0C GRE
+Normal（Outer[7:4] : Inner[3:0]）：0x4 NC / 0xB WT / 0xF WB
+                                    → 整字节常见 0x44 / 0xBB / 0xFF
+Linux 典型：MAIR_EL1 = 0x0000_BBFF_440C_0400
+```
+
+**TCR_EL1**（只列和 walk 相关的位）：
+
+| Bits | 字段 | 作用 |
+|------|------|------|
+| [5:0] / [21:16] | T0SZ / T1SZ | VA 位数 = `64 - TnSZ` |
+| [7] / [23] | EPD0 / EPD1 | 1 = 禁用对应根的 table walk |
+| [9:8] / [11:10] / [13:12] | IRGN0 / ORGN0 / SH0 | TTBR0 表 walk 的 Inner / Outer / Shareability |
+| [25:24] / [27:26] / [29:28] | IRGN1 / ORGN1 / SH1 | TTBR1 表 walk |
+| [15:14] / [31:30] | TG0 / TG1 | 页粒度（两套编码不对称） |
+| [34:32] | IPS | 物理地址位数 |
+
+`IRGN/ORGN`：`00` NC / `01` WBWA / `10` WT / `11` WBnWA；`SH`：`00` non-share / `10` outer / `11` inner。
+
+**页表放 non-cacheable 会怎样**：
+
+- 功能可以正确，但每次 walk 都上总线；L2 TLB / walk cache 仍可挡掉一部分。
+- 真正的坑是**属性不一致**：CPU 按 MAIR 把 PTE 写进 WB cache，walker 按 TCR 从内存读 → 旧 PTE。此时每次改 PTE 都要 clean cache 到 PoC。
+- ARM 改 PTE 的标准序列：写 PTE → `DSB` → clean to PoC → `DSB` → `TLBI` → `DSB/ISB`（break-before-make）。RV 对应：`fence` + `sfence.vma`（跨 hart 加 IPI）。
+
+**PTE 写入必然进 cache**：Linux 页表页来自普通内存（cacheable WB），缺页处理写 PTE 的 store 先把 line 写 dirty，未必立刻回内存；同 hart 再 walk 命中该行即可见，跨 hart / 跨 master 要靠 TLB shootdown + cache 维护。
+
+**VIVT / VIPT / PIPT 与 walker**：
+
+| 方案 | index / tag | walker（只有 PA）能查？ |
+|------|-------------|------------------------|
+| VIVT | VA / VA | 否 |
+| VIPT | VA / PA | 仅当 index 全在 page offset 内 |
+| PIPT | PA / PA | 是 |
+
+所以 L1 D$ 做 VIPT 时，必须把 index 限制在页内偏移（4KB 页下 ≤12 bit）；否则 walker 进不了这级 cache，只能去 L2/内存或专用 PT cache。
+
+**抓波**：TLB miss 不一定有总线 PTE 读（可能 L2 TLB / walk cache / D$ 命中）；看到「页表物理页」的读但没上总线，就是 walker 吃了 cache。
+
+**本节要点**：同一页表页有两条属性通道（显式 MAIR / 隐式 TCR），必须一致；walker 可走 cache 也可绕开，但只有 PIPT 或「index 在页内」的 VIPT 能让它复用 L1 D$；改 PTE 后 ARM 要 clean + TLBI，RV 要 `fence` + `sfence.vma`。
 
 **附录要点**：ARM64 与 RV 在「硬件 walk + OS 只处理失败」上同构；记 TTBR/TCR/MAIR/FAR/ESR 与 `satp`/PMA/`mtval`/`mcause` 的对应即可横跳文档。
 
