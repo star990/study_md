@@ -2,7 +2,7 @@
 
 > **系列**：`02-arch-boot`  
 > **前置**：[`03-boot-firmware.md`](03-boot-firmware.md)  
-> **相关**：[`01-exception.md`](01-exception.md) · [`02-gic.md`](02-gic.md)（§2.4 Secure 中断 / 1020·1021）
+> **相关**：[`01-exception.md`](01-exception.md) · [`02-gic.md`](02-gic.md)（§2.4 Secure 中断 / 1020·1021）· [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md) 附录 D.6（Secure 挂在访存链哪一跳）
 
 从信任根到应用的安全启动与运行时隔离：证书链、eFuse 生命周期、HSM、Secure Debug，再用项目案例串起来，并补 OP-TEE / SMC 接口层与 Trusted UI（安全键盘）路径。
 
@@ -490,12 +490,44 @@ Normal World (REE)          Secure World (TEE)
 
 ### 硬件隔离三件套：属性 → 控制器 → 中断
 
+**TZASC 在 MMU 之后，不在 LSU↔TLB 之间。** MMU 在核内做 VA→PA 并决定本笔「安全意图」；TZASC 贴在互联通往 **DDR 控制器之前**，按 PA + Secure/NS 做防火墙。访存链（对照 [`../04-riscv-core/03-memory-bus.md`](../04-riscv-core/03-memory-bus.md) 附录 D.6）：
+
+```
+VA
+ │
+ ▼
+TLB / MMU（核内）
+  · VA → PA
+  · NS 世界（Linux）：事务一律 Non-secure（页表 NS 位忽略，发不出 Secure）
+  · Secure 世界（OP-TEE）：看页表描述符 NS 位
+        NS=0 → Secure 访问；NS=1 → 故意发 NS（共享缓冲）
+  · TLB entry 按 Security state / NS 区分
+ │  PA + 安全意图
+ ▼
+L1/L2 Cache（核/簇内）
+  · Tag ≈ PA + NS（NS 相当于地址多一位）
+  · Secure 填的 line，NS 同 PA → miss，偷不到
+  · Hit → 本拍不到总线，也碰不到 TZASC
+ │  Miss 下总线
+ ▼
+AXI 互联
+  · ADDR = PA；AxPROT[1]：0=Secure，1=Non-secure
+ │
+ ▼
+TZASC / TZC（DDR 前）
+  · 该 PA 落在哪 region？是否允许此 AxPROT？
+  · 允许 → 往下；拒绝 → 读 0 / SLVERR，可报非法访问中断
+ │
+ ▼
+DDR Controller → DRAM
+```
+
 **1）每次访问带安全属性**
 
-- AXI：`AxPROT` 中一位标 Secure / Non-secure。
-- CPU 在 **NS** 时发出的事务**一律 NS**（页表里的 NS 位在 NS 状态下被忽略）→ 恶意改页表也发不出 Secure 访问。
-- CPU 在 **Secure** 时：按页表 NS 位可选访问 Secure 或 NS 内存（TEE 可写共享缓冲）。
-- **Cache / TLB 条目也带 NS**：同物理地址的 Secure 与 NS 视为不同行，NS 不会命中 Secure 留下的密钥缓存行。
+- AXI：`AxPROT` 中一位标 Secure / Non-secure（见 [`../05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md)）。
+- CPU 在 **NS** 时发出的事务**一律 NS** → 恶意改页表也发不出 Secure 访问。
+- CPU 在 **Secure** 时：按页表 NS 位可选 Secure 或 NS 内存（TEE 可写共享缓冲）。
+- **Cache / TLB 条目也带 NS**：同 PA 的 Secure 与 NS 视为不同行。
 
 **2）控制器按属性放行（总线本身不裁决）**
 
@@ -506,14 +538,36 @@ Normal World (REE)          Secure World (TEE)
 | **TZMA** (TrustZone Memory Adapter) | 片上 SRAM/ROM | 划一部分给安全世界 |
 
 配置寄存器本身通常也只接受 Secure 访问；启动阶段由 BL2/BL31/OP-TEE 划区，Linux 改不了。  
-**DMA** 作为 bus master 同样带安全属性，一般配成 NS master → 也不能靠 DMA 偷读 Secure DDR。
+**DMA** 作为 bus master 同样带安全属性，一般配成 NS master → 也不能靠 DMA 偷读 Secure DDR（DMA 无 CPU MMU，照样过 TZASC）。
 
 **3）中断分组（GIC）**
 
 - Group0 / Secure Group1 / NS Group1；分组配置仅 Secure 可改。
 - Linux 跑着时来了 Secure 中断 → 进 EL3 再交 TEE；NS 侧屏蔽挡不住。细节见 [`02-gic.md`](02-gic.md) §2.4（伪 ID **1020 / 1021**）。
 
-**Linux 读 Secure 内存被拒的路径（口述）**：页表映射了 Secure PA → NS CPU 发 NS 读 → TZASC 拒（读 0 或 bus error，可报中断）。内核能选「地址」，选不了「安全属性」。
+### TZASC 拒访 ≠ 进 TEE；谁才能碰 secure mm
+
+两件事必须拆开：
+
+| 路径 | 谁发起 | 总线属性 | TZASC | 含义 |
+|------|--------|----------|-------|------|
+| **非法窥探** | Linux 映射 Secure PA | 永远 NS | **拒**（可读 0 / bus error，可报中断） | 越界审计；**密钥仍读不到** |
+| **合法服务** | CA **主动 SMC** 进 TEE | TEE 发 **Secure** | **过** | TEE 用 secure mm，只回结果/密文 |
+| **共享内存** | Linux ↔ TEE 约定的 NS region | NS（两边可碰） | 对 NS 开放 | 传命令缓冲，不放明文密钥 |
+
+**非法路径（口述）**：页表映射了 Secure PA → NS CPU 发 NS 读 → TZASC 拒。内核能选「地址」，选不了「安全属性」。拒访中断多给 Secure 固件做 log/计数/复位——**不是**「撞一下门就自动进 TEE 读 secure 区」的调用机制。
+
+**合法路径**：
+
+```
+CA → libteec → 参数放 NS 共享内存 → SMC
+  → EL3：NS=0，进 OP-TEE / TA
+  → TEE 访问 Secure PA（页表 NS=0）→ AxPROT=Secure → TZASC 放行
+  → 读 secure mm / 密钥，运算后结果写回 NS 共享内存
+  → SMC 回 Linux
+```
+
+Linux 全程不用 Secure 事务读密钥区；只有已经切到 Secure state 的 CPU（或被配成 Secure 的 master）才能让 TZASC 对 secure region 放行。
 
 ### 启动先后：TEE 必须先于 Linux 就位
 
@@ -616,6 +670,7 @@ App 自绘「随机布局软键盘」多半仍在 **REE**，root/恶意内核仍
 3. IP 验证方法论（三阶段 + eFuse 特殊流程）
 4. CA→共享内存→SMC→TA；tee-supplicant 只碰密文/已签名镜像
 5. 安全键盘：TUI 收归 Touch/Display，PIN 不出 TEE
+6. 访存链：TLB/MMU → Cache(PA+NS) → AxPROT → TZASC → DDR；拒访中断 ≠ SMC 进 TEE
 
 ---
 
@@ -766,6 +821,7 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 - HSM/KDF 等是「密钥与算法落地」的硬件边界，验证要有标准向量。
 - 项目案例用来练「现象→根因→手段→结果」的叙述，而不是背型号。
 - 运行时：AxPROT + TZASC/TZPC 防被攻破的内核；BL31 先起 OP-TEE 再进 Linux；CA→libteec→共享内存→SMC→TA；tee-supplicant 只代办加载/落盘密文。
+- TZASC 在 MMU/**Cache 之后、DDR 之前**；Linux 映射 Secure PA 仍发 NS → 拒访（可中断）≠ 进 TEE。碰 secure mm 靠 SMC 切入 Secure 后再发 Secure 事务。
 - 支付安全键盘：TUI 会话收归 Touch/Display，PIN 只在 TA/HSM 内变成密文再回 REE——不是「input 驱动搬进 TEE」。
 - **Secure 中断**不是 Linux 主动 SMC：FIQ→BL31，IAR 伪 ID **1020** 驱动切 TEE、**1021** 驱动切回 Linux；Group0/Secure Group1/回程细节见 [`02-gic.md`](02-gic.md) §2.4。GIC 验证口述可对齐该节。
 
@@ -780,6 +836,8 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 7. 为何说 S-EL1 并不比 Linux EL1 更高？隔离靠什么？
 8. 没有 `/dev/tee0`、Session 打不开、可用内存少一块——分别先查什么？
 9. 支付安全键盘若只在 App 里画随机键位，和 Trusted UI 差在哪？PIN 明文应出现在哪一侧？
+10. TZASC 相对 MMU 在前还是后？Cache hit 还经 TZASC 吗？
+11. Linux 撞 Secure 内存产生的中断，是不是进 TEE 读密钥的正当路径？正当路径是什么？
 
 ---
 

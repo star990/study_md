@@ -2,7 +2,7 @@
 
 > **系列**：`04-riscv-core`  
 > **前置**：`[02-csr-trap.md](02-csr-trap.md)`（特权级与 trap **CSR** (Control and Status Register)）；流水线形态见 `[01-pipeline.md](01-pipeline.md)`  
-> **相关**：`[../05-bus-rtl/01-spinlock-to-bus.md](../05-bus-rtl/01-spinlock-to-bus.md)`（原子/Exclusive）；软件侧页表/**DMA** (Direct Memory Access) 见 `[../01-kernel/02-memory.md](../01-kernel/02-memory.md)`
+> **相关**：`[../05-bus-rtl/01-spinlock-to-bus.md](../05-bus-rtl/01-spinlock-to-bus.md)`（原子/Exclusive）；软件侧页表/**DMA** (Direct Memory Access) 见 `[../01-kernel/02-memory.md](../01-kernel/02-memory.md)`；TrustZone Secure/NS 全链路见附录 D.6 与 `[../02-arch-boot/04-security-secureboot-tee.md](../02-arch-boot/04-security-secureboot-tee.md)` §1.10
 
 上一篇总线专文把 **spinlock** 讲到 **AXI** (Advanced eXtensible Interface) Exclusive / **AHB** (Advanced High-performance Bus) `HLOCK`。本文换一条更日常的路径：  
 `lw` **从片上 SRAM (Static Random-Access Memory) 读一个字**——从 **LSU** (Load/Store Unit) 算地址，经 **TLB** (Translation Lookaside Buffer) / **MMU** (Memory Management Unit)、**PMP** (Physical Memory Protection)、**PMA** (Physical Memory Attributes)、一级 D-cache、总线主口、Bus Matrix，再到 SRAM slave。  
@@ -16,6 +16,7 @@
 - 画出双 hart 框图：哪些模块复制、哪些共享，并解释无 snoop 时为何会读到旧值
 - 对照软件一致 / 硬件 snoop / **AMP** (Asymmetric Multi-Processing)，以及 `lr`/`sc`、`fence`、`sfence.vma` 落在哪一层
 - 分清 TLB miss 与 page fault；能对照 ARM64 的 Stage1/2、TTBR、缺页异常寄存器（见附录 D）
+- 知道 ARM TrustZone 下 Secure/NS 挂在 TLB→Cache→AxPROT→TZASC→DDR 哪一跳（附录 D.6）
 
 ---
 
@@ -45,7 +46,7 @@
 20. [附录 A：裸机无 MMU 的最短路径](#附录-a裸机无-mmu-的最短路径)
 21. [附录 B：异常对照表（Load 相关）](#附录-b异常对照表load-相关)
 22. [附录 C：Linux 举例——VMA / PTE / TLB 与各类 page fault](#附录-clinux-举例vma--pte--tlb-与各类-page-fault)
-23. [附录 D：ARM64 对照速查（与本文 RV 路径对齐）](#附录-darm64-对照速查与本文-rv-路径对齐)
+23. [附录 D：ARM64 对照速查（与本文 RV 路径对齐）](#附录-darm64-对照速查与本文-rv-路径对齐)（含 [D.6 TrustZone Secure/NS](#d6-trustzone-securens-挂在访存链哪一跳)）
 24. [小结](#小结)
 25. [自测](#自测)
 
@@ -1742,8 +1743,10 @@ ARM 文档里的 Data/Instruction Abort，在 Linux 里仍归到 page fault / pe
 | 本文分层 | ARM64 上你还会听到 |
 |----------|-------------------|
 | §4 TLB + walker | MMU + Table Walker；TTBR/TCR |
-| §5 PMP | 无同款标准物；靠 Stage1/2 权限 +（Secure）另一套机制 |
+| §5 PMP | 无同款标准物；靠 Stage1/2 权限；**TrustZone 下挡 NS 偷 Secure DDR 靠 TZASC（D.6）**，不是靠 Linux 页表 |
 | §6 PMA | **MAIR** + PTE AttrIndex；Device vs Normal |
+| §8 总线主口 | 另带 **`AxPROT[1]` Secure/NS**（见 [`../05-bus-rtl/03-axi-ahb.md`](../05-bus-rtl/03-axi-ahb.md)） |
+| 进 DDR 前 | **TZASC**：按 PA region + AxPROT 放行/拒绝 |
 | 附录 C Linux | 两边同一套 VMA/缺页/COW；差在异常寄存器名 |
 
 ### D.4 缓存索引旁注（可选）
@@ -1813,15 +1816,37 @@ Linux 典型：MAIR_EL1 = 0x0000_BBFF_440C_0400
 
 **本节要点**：同一页表页有两条属性通道（显式 MAIR / 隐式 TCR），必须一致；walker 可走 cache 也可绕开，但只有 PIPT 或「index 在页内」的 VIPT 能让它复用 L1 D$；改 PTE 后 ARM 要 clean + TLBI，RV 要 `fence` + `sfence.vma`。
 
-**附录要点**：ARM64 与 RV 在「硬件 walk + OS 只处理失败」上同构；记 TTBR/TCR/MAIR/FAR/ESR 与 `satp`/PMA/`mtval`/`mcause` 的对应即可横跳文档。
+**附录要点**：ARM64 与 RV 在「硬件 walk + OS 只处理失败」上同构；记 TTBR/TCR/MAIR/FAR/ESR 与 `satp`/PMA/`mtval`/`mcause` 的对应即可横跳文档。TrustZone 再在总线属性与 DDR 门前加 Secure/NS（D.6）。
+
+### D.6 TrustZone Secure/NS：挂在访存链哪一跳
+
+本文正文未展开 Secure；跑 Linux + OP-TEE 的 ARM SoC 上，同一条 Load 还要带安全属性。细节与「拒访 ≠ 进 TEE」见 [`../02-arch-boot/04-security-secureboot-tee.md`](../02-arch-boot/04-security-secureboot-tee.md) §1.10。
+
+```
+VA → TLB/MMU（定 PA + 安全意图；NS 世界一律发 Non-secure）
+   → D$/L2（tag ≈ PA+NS；Hit 则不到总线）
+   → AXI（ADDR=PA，AxPROT[1]=Secure/NS）
+   → TZASC（DDR 前：按 region 允/拒）
+   → DDR
+```
+
+| 对照本文 | TrustZone 增量 |
+|----------|----------------|
+| §4 TLB/MMU | 多产出 NS 意图；TLB 按 Security state 分项 |
+| §5 PMP | 挡不住「内核映射 Secure PA」——那笔仍是 NS，要靠 **TZASC** |
+| §7 D$ | tag 带 NS；两世界同 PA 不共享 line |
+| §8 Bus | 多 `AxPROT[1]` |
+| 内存门口 | 多 **TZASC**（外设则 **TZPC**） |
+
+**TZASC 在 MMU 后**（及 Cache miss 路径上），不在 LSU↔TLB 之间。  
+Linux 可映射任意 PA，发出去仍是 NS → TZASC 可拒并可报中断——那是**越界审计**，不是进 TEE 的门。TEE 碰 secure mm：CA **SMC** 切入 Secure → CPU 发 Secure 事务 → TZASC 放行。参数走 NS 共享内存。
 
 ---
-
-
 
 ## 小结
 
 - 一次 `lw` 到 SRAM：LSU → **TLB/MMU** → **PMP** → **PMA** → **D$**（或 NC 旁路）→ **Bus Master** → **Matrix** → **SRAM Slave** → 阵列；Hit 在 D$ 截断。  
+- ARM + TrustZone：同链再挂 **NS 意图 / Cache tag / AxPROT / TZASC**（附录 D.6）；拒访中断 ≠ SMC。  
 - **PMP ≠ PMA**：前者问「准不准进」，后者问「当内存还是 Device、走不走 cache」。  
 - **每个 Port 职责不同**：翻译、权限、属性、缓存、协议、仲裁、从口时序——抓波要对号入座。  
 - Page walk 与 line fill **都会占用总线**；前者读 PTE，后者读数据行。Walk/页权限失败是 **Load page fault（**`mcause=13`**）**，不是总线 ERROR；与 PMP 的 access fault 分层。  
@@ -1852,7 +1877,8 @@ Linux 典型：MAIR_EL1 = 0x0000_BBFF_440C_0400
 10. `lr`/`sc`、`fence`、`sfence.vma`+IPI 各解决哪一类问题？  
 11. 无 MMU 的 MCU 路径去掉了哪一段？双核 + 私有 TCM + 共享 mailbox 属于哪条出路？  
 12. PMP 与 PMA 各回答什么问题？MMIO 被标成 cacheable 时波形上可能看到什么异常？  
-13. PMA=Device 时，Load 还走 D$ line fill 吗？与 `AxCACHE`/`HPROT` 是什么关系？
+13. PMA=Device 时，Load 还走 D$ line fill 吗？与 `AxCACHE`/`HPROT` 是什么关系？  
+14. TrustZone 下 TZASC 相对 MMU 在哪？Linux 映射 Secure PA 为何仍读不到密钥？正当读密钥靠什么？
 
 ---
 
