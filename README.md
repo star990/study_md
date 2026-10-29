@@ -18,7 +18,7 @@
         ↓
 04-riscv-core      RV Core（Trap / Load→SRAM 成文；流水线等草稿）
         ↓
-05-bus-rtl         spinlock → AXI Exclusive / AHB HLOCK
+05-bus-rtl         spinlock → AXI Exclusive / AHB HLOCK · RV Debug ProgBuf
         ↓
 06-gtm-ip          RTL 基础 ·（计划）core + SRAM + PWM 控电机 IP
         ↓
@@ -109,6 +109,7 @@
 | [01-spinlock-to-bus.md](05-bus-rtl/01-spinlock-to-bus.md) | spinlock → AXI (Advanced eXtensible Interface) Exclusive / Monitor；对照 AHB (Advanced High-performance Bus) `HLOCK` |
 | [02-cache.md](05-bus-rtl/02-cache.md) | Cache 专题：属性/`AxCACHE`/4KB（后续补一致性等） |
 | [03-axi-ahb.md](05-bus-rtl/03-axi-ahb.md) | AXI/AHB 协议速查：`AxCACHE`/`AxPROT`/`HPROT`、原子、桥接、Outstanding/AxID |
+| [04-debug.md](05-bus-rtl/04-debug.md) | RISC-V Debug：ProgBuf / Debug ROM（Andes execution-based ↔ C906 ITR） |
 
 ### `06-gtm-ip/`
 
@@ -149,7 +150,8 @@
 3. `01-exception` → `02-gic` → `03-boot-firmware` → `04-security-…`（固件链可与 `05-start-kernel` 对照）  
 4. `01-freertos-realtime` → `02-bsp-and-boot`  
 5. `04-riscv-core/02-csr-trap`（RV 异常/CSR；对照表仍看 `01-exception`）  
-6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `05-bus-rtl/03-axi-ahb`（协议速查）→ `01-spinlock-to-bus`（原子）→ `02-cache`（属性与一致性）  
+6. `04-riscv-core/03-memory-bus`（Load 路径闭环）→ `05-bus-rtl/03-axi-ahb`（协议速查）→ `01-spinlock-to-bus`（原子）→ `02-cache`（属性与一致性）→ `04-debug`（ProgBuf / DM，按需）  
+
 7. `06-gtm-ip/01-rtl-basics`（RTL 思维打底；写 GTM 前建议先读）  
 8. `04` 其余草稿 → 之后 `06-gtm-ip` 其余  
 9. `08-ai-soc`：`01-soc-common` → `02-tpu` / `03-gpu`（按兴趣；两路可对照）
