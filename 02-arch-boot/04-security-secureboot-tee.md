@@ -4,12 +4,13 @@
 > **前置**：[`03-boot-firmware.md`](03-boot-firmware.md)  
 > **相关**：[`01-exception.md`](01-exception.md) · [`02-gic.md`](02-gic.md)（§2.4 Secure 中断 / 1020·1021）
 
-从信任根到应用的安全启动与运行时隔离：证书链、eFuse 生命周期、HSM、Secure Debug，再用项目案例串起来，最后补 OP-TEE / SMC 接口层。
+从信任根到应用的安全启动与运行时隔离：证书链、eFuse 生命周期、HSM、Secure Debug，再用项目案例串起来，并补 OP-TEE / SMC 接口层与 Trusted UI（安全键盘）路径。
 
 **读完应能**：
 - 白板讲清 Secure Boot 主路径
 - 说明 eFuse 生命周期与密钥角色
-- 画出 REE/TEE 与 SMC 调用关系
+- 画出 REE/TEE 与 SMC 调用关系（含 CA→TA、tee-supplicant）
+- 说明支付安全键盘为何不在 Linux input 里、PIN 如何不出 TEE
 
 ---
 ## Secure Boot 全链路
@@ -46,6 +47,7 @@
 |------|------|----------|
 | **Secure Boot** | 签名验证链 | eFuse root key + 证书链 |
 | **生物识别** | TEE 保护模板 | OP-TEE TA |
+| **移动支付 / PIN** | Trusted UI + 密钥不出 TEE | Secure Touch/Display + 支付 TA |
 | **DRM** | 密钥隔离 | Widevine/FairPlay/PlayReady |
 | **可信计算** | TPM/TEE | Windows 11 必选 |
 | **Secure Debug** | Token 授权 | Signed debug token |
@@ -459,13 +461,161 @@ Phase 3: 场景验证
 
 ---
 
+## 1.10 OP-TEE 运行时与 Trusted UI
+
+> 启动验签保证「进来的固件可信」；本节讲 Linux 起来之后，密钥/PIN 如何仍不落在 REE。硬件动机与 CA/TA 分层可对照公众号文《从 TrustZone 到 OP-TEE：安全世界是怎样实现的？》（本地：`~/5_temp/TrustZone 到 OP-TEE：安全世界是怎样实现的？.html`）。
+
+### 为何 MMU 不够：缩小 TCB
+
+- Linux 用 MMU 隔离进程，但**页表由内核维护** → 内核被攻破（root / 恶意模块）即可映射任意物理地址。
+- 若密钥只存在 Linux，整个内核 + 驱动都进 **TCB (Trusted Computing Base)**，无法逐行审查。
+- TEE 用**内核改不了的硬件属性**划出 Secure 内存/外设，再由小得多的可信 OS + TA 使用密钥；REE 只能走受限接口拿「结果」，拿不到密钥本身。
+
+### 两世界：差在 Secure state，不在 EL 高低
+
+```
+Normal World (REE)          Secure World (TEE)
+  EL0  App / CA               S-EL0  TA
+  EL1  Linux                  S-EL1  OP-TEE
+  EL2  Hypervisor (可选)
+              │
+              ▼
+         EL3 Secure Monitor (BL31，始终 Secure)
+              SCR_EL3.NS：1 = 下面跑 NS；0 = 下面跑 Secure
+```
+
+- **S-EL1 并不比 Linux EL1「更特权」**；隔离靠 CPU Secure state + 总线安全属性，不是靠异常级别更高。
+- `SCR_EL3.NS` 只能在 EL3 改 → Linux **不能**自己切进安全世界；唯一主动入口是 **SMC (Secure Monitor Call)**。
+- 独立安全核（Apple SE、独立 SE 芯片）是另一条路；TrustZone 是**同一核分时** Secure/NS。
+
+### 硬件隔离三件套：属性 → 控制器 → 中断
+
+**1）每次访问带安全属性**
+
+- AXI：`AxPROT` 中一位标 Secure / Non-secure。
+- CPU 在 **NS** 时发出的事务**一律 NS**（页表里的 NS 位在 NS 状态下被忽略）→ 恶意改页表也发不出 Secure 访问。
+- CPU 在 **Secure** 时：按页表 NS 位可选访问 Secure 或 NS 内存（TEE 可写共享缓冲）。
+- **Cache / TLB 条目也带 NS**：同物理地址的 Secure 与 NS 视为不同行，NS 不会命中 Secure 留下的密钥缓存行。
+
+**2）控制器按属性放行（总线本身不裁决）**
+
+| 控制器 | 保护对象 | 作用 |
+|--------|----------|------|
+| **TZASC** (TrustZone Address Space Controller，如 TZC-400) | DDR | 按区域配 Secure/NS 读写权限 |
+| **TZPC** (TrustZone Protection Controller) | 外设 | 加密引擎、OTP、安全定时器等可锁成仅 Secure |
+| **TZMA** (TrustZone Memory Adapter) | 片上 SRAM/ROM | 划一部分给安全世界 |
+
+配置寄存器本身通常也只接受 Secure 访问；启动阶段由 BL2/BL31/OP-TEE 划区，Linux 改不了。  
+**DMA** 作为 bus master 同样带安全属性，一般配成 NS master → 也不能靠 DMA 偷读 Secure DDR。
+
+**3）中断分组（GIC）**
+
+- Group0 / Secure Group1 / NS Group1；分组配置仅 Secure 可改。
+- Linux 跑着时来了 Secure 中断 → 进 EL3 再交 TEE；NS 侧屏蔽挡不住。细节见 [`02-gic.md`](02-gic.md) §2.4（伪 ID **1020 / 1021**）。
+
+**Linux 读 Secure 内存被拒的路径（口述）**：页表映射了 Secure PA → NS CPU 发 NS 读 → TZASC 拒（读 0 或 bus error，可报中断）。内核能选「地址」，选不了「安全属性」。
+
+### 启动先后：TEE 必须先于 Linux 就位
+
+与 §1.4 一致，强调运行时含义：
+
+```
+BL31 初始化
+  → 先以 Secure 进入 BL32 (OP-TEE)：建安全映射、线程、TA 环境
+  → OP-TEE SMC 回 BL31，登记各入口
+  → 再 NS=1 进 BL33 (U-Boot) → Linux
+```
+
+- TZASC 等在 Linux 跑前配好；划给 TEE 的内存在 DT 里常标 **reserved** → 开启 TEE 后「可用内存少一块」，Linux 一般收不回。
+- 若 TEE 在 Linux 之后才装，Linux 有窗口改安全代码/控制器 → **不可接受**。
+
+### CA → TA：一次调用穿过哪些层
+
+OP-TEE 在安全世界内再隔离：**每个服务一个 TA（S-EL0，独立地址空间，UUID + 签名校验）**。接口跟 GlobalPlatform：Client API（CA）/ Internal Core API（TA）。
+
+```
+CA (REE EL0)
+  └─ libteec：TEEC_OpenSession / TEEC_InvokeCommand
+       └─ ioctl → Linux TEE 子系统 (drivers/tee/) + OP-TEE 驱动
+            · /dev/tee0     ← CA
+            · /dev/teepriv0 ← tee-supplicant
+            └─ 参数写入 NS↔Secure 共享内存，物理地址进寄存器
+                 └─ SMC → BL31 (opteed) 存 Linux 上下文（含 EL1 系统寄存器）
+                      └─ NS=0，ERET → OP-TEE → 目标 TA
+                           · 私钥只在 Secure 内存；共享内存里只有明文入参 + 结果（如签名）
+                      ← SMC 回 EL3，恢复 Linux，ioctl 返回 CA
+```
+
+要点：
+
+- SMC 像「门铃」；大数据走**共享内存**（类比 mailbox + 共享缓冲）。
+- AArch64 下 EL1 的 TTBR/VBAR 等**两世界共用一套寄存器**，故 Monitor 切换时必须保存/恢复 EL1 上下文。
+- 发起 SMC 的 Linux 线程会停在调用上，这段 CPU 时间跑的是 TEE；OP-TEE 线程用尽则在驱动侧排队。若 TA 执行中来了 Linux 中断，OP-TEE 可先退回 NS 让 Linux 处理，再 SMC 续跑。
+- **没有 `/dev/tee0`**：多半固件没起 OP-TEE、DT 无 `optee` 节点、或内核未开驱动。
+
+### RPC：tee-supplicant 反向代办
+
+OP-TEE 自己没有完整 FS/eMMC 驱动。处理请求中途可通过 SMC 返回 **RPC**，请 REE 代办：
+
+| RPC 典型用途 | 行为 | 安全边界 |
+|--------------|------|----------|
+| **加载 TA** | tee-supplicant 从 FS 读 TA 镜像 → 共享内存；OP-TEE 拷进 Secure 内存并**验签** | REE 可删文件，无法伪造合法签名镜像 |
+| **安全存储** | TEE 用 HUK 等派生密钥加密后，请 REE 写密文到 FS | REE 只有密文；篡改验不过 |
+
+嵌入式集成：启动脚本需先拉起 **tee-supplicant**，否则依赖文件系统的 TA 会 **OpenSession 失败**。
+
+### 支付安全键盘：Trusted UI（不是搬 Linux input）
+
+App 自绘「随机布局软键盘」多半仍在 **REE**，root/恶意内核仍可能截获。真要防 NS 侧偷看 PIN，走 **Trusted UI / Secure Touch**：
+
+```
+支付 CA ① Invoke「请输入 PIN」
+    → SMC → 支付 TA 申请 TUI 会话
+    → 硬件（厂商）：Display 切 Secure framebuffer；Touch IRQ 改 Secure（TZPC）
+    → 用户点按：坐标只进 TEE；屏幕常只显示 *；PIN 缓冲仅 Secure 内存
+    → TA/HSM 内做 PIN block / MAC / 签名
+    → ③ 仅密文或 token 回 CA；清 PIN；解除 TUI，恢复 NS 显示/触摸
+```
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| 支付 App / CA | REE | 发起会话，展示普通业务 UI |
+| 支付 TA | TEE | 会话、组 PIN、密码运算；**明文不出 TEE** |
+| Secure Touch/Display 路径 | TEE 或厂商安全固件 | TUI 会话期内读坐标、画安全帧缓冲 |
+| 触摸/显示控制器 | TZPC 配 Secure | 会话内 NS 读不到 |
+| 普通 `input` / IME | REE | 平时使用；进 TUI 后旁路 |
+
+一句话：**不是把整棵 Linux 输入栈搬进 TEE，而是会话期把输入/显示收归 Secure；回 REE 的只有密文/结果。**  
+更高要求时 PIN/密钥再下沉到 **独立 SE**；TrustZone 主要防 NS 软件攻击，对物理/侧信道有限（与文章结论一致）。
+
+### 其它常见 TEE OS（可选印象）
+
+| TEE OS | 开源 | 常见平台 |
+|--------|------|----------|
+| OP-TEE | 是 | 嵌入式 Linux 参考实现 |
+| Trusty | 是（AOSP） | 部分 Android |
+| QSEE/QTEE | 否 | 高通 |
+| TEEGRIS / iTrustee / Kinibi | 否 | 三星 / 华为 / Trustonic 等 |
+
+硬件隔离与 EL3 切换模型相同；多数跟 GP，Trusty 用自有接口。
+
+### 排障三句
+
+1. **可用内存少一块** → 查安全内存 / DT reserved。  
+2. **没有 `/dev/tee0`** → 查 BL32 是否起来、DT `optee`、内核 TEE 驱动。  
+3. **Session 打不开** → 查 tee-supplicant、TA 文件路径与签名。
+
+---
+
 ### 本节要点
 
-**建议能白板讲清的 3 个内容**：
+**建议能白板讲清的内容**：
 
 1. Secure Boot 全链路（BL1→Linux，含验签 5 步）
 2. eFuse 生命周期（CM→DM→SE→回厂）
 3. IP 验证方法论（三阶段 + eFuse 特殊流程）
+4. CA→共享内存→SMC→TA；tee-supplicant 只碰密文/已签名镜像
+5. 安全键盘：TUI 收归 Touch/Display，PIN 不出 TEE
 
 ---
 
@@ -615,7 +765,8 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 - 信任链：只信任 RoT，再逐级验签；eFuse 承载生命周期与密钥材料。
 - HSM/KDF 等是「密钥与算法落地」的硬件边界，验证要有标准向量。
 - 项目案例用来练「现象→根因→手段→结果」的叙述，而不是背型号。
-- OP-TEE 经 SMC 待在 Secure 世界，CA/TA 与共享内存是接口层重点。
+- 运行时：AxPROT + TZASC/TZPC 防被攻破的内核；BL31 先起 OP-TEE 再进 Linux；CA→libteec→共享内存→SMC→TA；tee-supplicant 只代办加载/落盘密文。
+- 支付安全键盘：TUI 会话收归 Touch/Display，PIN 只在 TA/HSM 内变成密文再回 REE——不是「input 驱动搬进 TEE」。
 - **Secure 中断**不是 Linux 主动 SMC：FIQ→BL31，IAR 伪 ID **1020** 驱动切 TEE、**1021** 驱动切回 Linux；Group0/Secure Group1/回程细节见 [`02-gic.md`](02-gic.md) §2.4。GIC 验证口述可对齐该节。
 
 ## 自测
@@ -623,9 +774,12 @@ HSM Secure Boot、CoreMark 性能优化、 silicon bug 提前发现。
 1. 用五分钟结构讲清 Secure Boot 主路径。
 2. eFuse 生命周期如何约束 debug 与密钥权限？
 3. Anti-rollback 比较的是哪两边？
-4. CA 调用到 TA 的路径经过哪些层次？
+4. CA 调用到 TA 的路径经过哪些层次？共享内存和 SMC 各干什么？
 5. IP 验证常用哪三阶段？各解决什么风险？
 6. Linux 跑着来了 Secure Group1 中断：和 CA→SMC→TA 路径差在哪？1020 扮演什么角色？
+7. 为何说 S-EL1 并不比 Linux EL1 更高？隔离靠什么？
+8. 没有 `/dev/tee0`、Session 打不开、可用内存少一块——分别先查什么？
+9. 支付安全键盘若只在 App 里画随机键位，和 Trusted UI 差在哪？PIN 明文应出现在哪一侧？
 
 ---
 
