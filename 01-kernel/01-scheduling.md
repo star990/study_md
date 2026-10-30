@@ -383,23 +383,49 @@ irqreturn_t my_irq(int irq, void *dev)
 
 ### 1.6.3 softirq：实现要点
 
-**是什么**：内核编译期固定的一类「软件中断」向量（网络、block、RCU、tasklet 载体、HRTimer…），在 **关底半部** 的上下文执行，**仍不可睡眠**。
+**是什么**：内核编译期固定的一类「软件中断」向量（网络、block、RCU、tasklet 载体、HRTimer…），在 **关底半部** 的上下文执行，**仍不可睡眠**。驱动一般不自己 `open` 新类型，而是 `raise` 已有向量，或用建在其上的 tasklet / NAPI (New API)。
 
-**注册与触发**：
+#### 先分清：中文「软中断」常混两件事
+
+核间通信用的是 **硬件 IPI**（ARM GIC **SGI** / RISC-V **MSIP**），**不是** Linux `softirq`。详见 [`../02-arch-boot/02-gic.md`](../02-arch-boot/02-gic.md) §2.6.3。
+
+| | 硬件 SGI / MSIP（IPI） | Linux **softirq** |
+|--|----------------------|-------------------|
+| 是什么 | **真中断**，对端进异常向量 | **纯软件**底半部（pending 位 + `action()`） |
+| 用途 | **核间通信** | 网络、timer、RCU、跑 tasklet… |
+| 触发 | 写 GIC SGI / 写他核 MSIP | `raise_softirq()` |
+| 与 GIC/PLIC | 走 ACK/EOI（Claim/Complete） | **不操作 GIC/PLIC**，无 INTID |
+
+#### 上下文（有「中断上下文」概念）
+
+| 机制 | 上下文 | `in_interrupt()` | 能 sleep？ |
+|------|--------|------------------|-----------|
+| 硬中断（顶半部） | hardirq | 是 | 否 |
+| **softirq** | softirq / BH | 是（广义中断上下文） | **否** |
+| **tasklet** | 跑在 softirq 上 | 是 | **否** |
+| **workqueue** | 进程（`kworker`） | 否 | **是** |
+| threaded IRQ 线程 | 进程 | 否 | 是 |
+
+判据：`in_serving_softirq()`；与硬中断一样不能 `mutex` / `kmalloc(GFP_KERNEL)` / `wait_event`。相对硬中断：通常 **IRQ 已开、该号 GIC 已 EOI**，可被**新的硬中断**打断；本 CPU 在 `__do_softirq` 期间关 BH，不嵌套再进 softirq。
+
+#### 注册与触发（raise ≠ 立刻执行）
 
 ```c
-/* 启动时 */
+/* 启动时（子系统注册；驱动少直接 open） */
 open_softirq(NET_RX_SOFTIRQ, net_rx_action);
 
-/* 硬中断或其它路径 */
-raise_softirq(NET_RX_SOFTIRQ);   /* 置 pending 位 */
+/* 置本 CPU pending 位，几乎立刻返回 */
+raise_softirq(NET_RX_SOFTIRQ);
+/* 已关中断时可用更轻的 raise_softirq_irqoff() */
 ```
+
+谁常 raise：网卡/NAPI → `NET_RX`；`tasklet_schedule` → `TASKLET_SOFTIRQ`；timer、RCU 等。
 
 **何时真正跑**：
 
-1. 硬中断返回前：`irq_exit` → `invoke_softirq` → `__do_softirq`
+1. 硬中断返回：`irq_exit` → `invoke_softirq` → `__do_softirq`
 2. `local_bh_enable()` 时若 pending
-3. 太多/太久 → 唤醒 **`ksoftirqd/N`** 在进程上下文继续跑（仍标为 softirq 语义，但可被调度）
+3. 太多/太久 → 唤醒 **`ksoftirqd/N`** 在进程上下文继续跑（仍按 softirq 语义，**习惯上仍当不可睡**）
 
 ```
 __do_softirq():
@@ -410,6 +436,14 @@ __do_softirq():
   开 BH
 ```
 
+与 GIC 的时间线（softirq **本身不碰** IAR/EOIR）：
+
+```
+读 IAR → Active → 顶半部 → 写 EOIR → Inactive
+                         ↓ raise_softirq
+               irq_exit → __do_softirq → action()
+```
+
 **特点**：
 
 | | softirq |
@@ -417,7 +451,8 @@ __do_softirq():
 | 上下文 | 通常硬中断尾 / BH-disable；可落到 ksoftirqd |
 | 能睡？ | **否** |
 | 并发 | **同一 softirq 可在多 CPU 同时跑**（网络收包靠此） |
-| 同步 | 共享数据常用 `spinlock` / per-CPU |
+| 同步 | 共享数据常用 `spinlock` / per-CPU；与进程共享用 `spin_lock_bh` |
+| GIC | **不操作**；EOI 已在硬中断路径完成 |
 
 **常见类型**：`HI_SOFTIRQ`、`TIMER`、`NET_TX/RX`、`BLOCK`、`IRQ_POLL`、`TASKLET`、`SCHED`、`HRTIMER`、`RCU` 等。
 
@@ -626,11 +661,13 @@ static irqreturn_t thread(int i, void *d) { /* 可睡 */ return IRQ_HANDLED; }
 
 ### 1.6.11 高频追问（底半部）
 
-1. **软中断里能调用 `mutex_lock` 吗？** → 不能（不可睡）。  
+1. **软中断里能调用 `mutex_lock` 吗？** → 不能（不可睡）。注意：若问的是 **SGI/IPI**，那是硬中断路径，同样不可睡。  
 2. **tasklet 和 softirq 谁更并行？** → softirq 同类型可多 CPU；tasklet 同实例串行。  
 3. **为何 PREEMPT_RT 还要 `raw_spinlock`？** → 调度器/中断入口等不能睡的硬原子区。  
 4. **`spin_lock_bh` 禁的是什么？** → 本 CPU softirq（底半部），防与 softirq 死锁。  
-5. **workqueue 一定比 softirq 慢吗？** → 通常是（线程唤醒）；但可睡、更安全；RT 上 softirq 线程化后差距可能缩小。
+5. **workqueue 一定比 softirq 慢吗？** → 通常是（线程唤醒）；但可睡、更安全；RT 上 softirq 线程化后差距可能缩小。  
+6. **softirq 操作 GIC 吗？** → 否；硬中断路径已 EOI。核间通信是 SGI/MSIP，不是 softirq。  
+7. **怎么触发 softirq？** → `raise_softirq` 置 pending；真正跑在 `irq_exit` / `local_bh_enable` / `ksoftirqd`。
 
 ---
 
@@ -1152,6 +1189,8 @@ cyclictest -m -S -p 90 -i 200 -l 100000
 - 调度 class 按场景分工：CFS 默认公平，RT（FIFO/RR）保截止，EAS 做能效选核。
 - PREEMPT_RT 关键改动是 IRQ 线程化与可睡眠锁，把延迟从「不可预期」推向「可测量」。
 - 底半部选型看能否睡眠、延迟预算与上下文：softirq / tasklet / workqueue / threaded IRQ。
+- **SGI/IPI ≠ softirq**：前者硬件核间中断；后者纯软件 pending，**不碰 GIC**。
+- softirq/tasklet 属 BH/中断系上下文（不可睡）；workqueue / irq thread 是进程上下文（可睡）。
 - 机器人控制常落在 RTOS 或 AMP；Linux PREEMPT_RT 适合「要生态又要较低延迟」的折中。
 
 ## 自测
@@ -1163,6 +1202,7 @@ cyclictest -m -S -p 90 -i 200 -l 100000
 5. 主线与 PREEMPT_RT 上，spinlock / raw_spinlock / mutex 怎么理解？
 6. 何种场景选 PREEMPT_RT，何种场景更该上 RTOS/AMP？
 7. RTOS+PMP：切任务要切什么？为何应用不能直接碰内核栈与裸寄存映射？
+8. 硬件 SGI/IPI 与 Linux softirq 如何区分？softirq 如何 raise、何时真正执行？
 
 ---
 

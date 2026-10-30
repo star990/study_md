@@ -12,6 +12,8 @@
 - 对照 PLIC 的 claim/complete
 - 口述「Linux 跑着来了 Secure IRQ」的完整路径（含上下文保存与回程）
 - 说明 1020 / 1021 / 1023 各自含义
+- 对照 Linux 顶半部/底半部时该 INTID 的 GIC 状态；区分 `DAIF.I` 与 `MEIP`
+- 区分硬件 SGI/IPI 与 Linux softirq（后者不操作 GIC）
 
 ---
 ## GICv3 中断控制器
@@ -224,6 +226,57 @@ request_irq(irq_num, my_handler, IRQF_TRIGGER_RISING, "dev", dev_id);
 /* ARM: irq_num = GIC SPI 32 → RISC-V: irq_num = PLIC IRQ 0 等 */
 ```
 
+### 2.6.1 顶半部 / 底半部时 GIC 状态
+
+GIC 对单个 INTID 的常见状态：`Inactive` → `Pending` → `Active`（可读 IAR 后）→ 写 EOIR 后回到 `Inactive`；处理中若再次到来可为 `Active and Pending`。
+
+| Linux 阶段 | 该 INTID 在 GIC 上 | 说明 |
+|------------|-------------------|------|
+| 外设刚拉线、尚未 ACK | **Pending** | 已进 Distributor，CPU 未认领 |
+| **顶半部**（`request_irq` 硬中断 handler） | **Active** | `gic_handle_irq` 读 `ICC_IAR1_EL1` 之后 |
+| 顶半部末尾 EOI 之后 | **Inactive**（正常） | 写 `ICC_EOIR1_EL1`；电平触发须先清外设，否则立刻再 Pending |
+| **底半部**（softirq / tasklet / workqueue / irq thread） | **通常已 Inactive** | EOI 一般在硬中断路径做完；底半部不再占用该号的 Active |
+
+一句话：**顶半部 ↔ Active（已 ACK 未 EOI）；底半部 ↔ 已 EOI / Inactive**（与 PLIC Claim/Complete 同理：complete 不拖到 softirq）。
+
+```
+GIC 投递 → 读 IAR → Active → 驱动顶半部 → 写 EOIR → Inactive
+                                              ↓ raise_softirq 等
+                                    irq_exit → softirq / 其它底半部   ← 不再操作 GIC
+```
+
+### 2.6.2 Inactive 就能响应别的中断？— `DAIF` vs `MEIP`
+
+**不完全是。** 拆两层：
+
+| 层 | 含义 |
+|----|------|
+| **GIC** | 本 INTID EOI→Inactive，并放下该核 Running Priority；更低优先级中断才有机会再拉 `nIRQ` |
+| **CPU** | 还要看 **`DAIF.I` 是否清掉**。Linux 硬中断路径里通常一直关着 IRQ，返回/开中断后才真正接下一枪 |
+
+`MEIP` **不是**「全部中断使能开关」，是 RISC-V `mip` 里的 **外部中断 pending 位**。
+
+| 作用 | RISC-V | ARM |
+|------|--------|-----|
+| **CPU 总 mask（关中断）** | `mstatus.MIE` / `SIE` | **`DAIF.I`**（IRQ）/ `DAIF.F`（FIQ） |
+| **外部中断类使能** | `mie.MEIE` | **`ICC_IGRPEN1_EL1`**（Group1）等 |
+| **单号使能** | PLIC `enable` | `GICD_ISENABLER` / GICR |
+| **优先级挡板** | PLIC `threshold` | **`ICC_PMR_EL1`** |
+| **「有外部中断挂着」** | **`mip.MEIP`** | CPU Interface 拉 **`nIRQ`** |
+
+> 找「总开关」→ `DAIF.I` ≈ `mstatus.MIE`；找「外部 pending 指示」→ `nIRQ` ≈ `MEIP`。详见 [`01-exception.md`](01-exception.md) DAIF 对照。
+
+### 2.6.3 中文「软中断」：SGI/IPI ≠ Linux softirq
+
+| | 硬件「软件产生的中断」 | Linux **softirq** |
+|--|----------------------|-------------------|
+| 是什么 | **真中断**（进异常向量） | **纯软件底半部**（per-CPU pending + `action()`） |
+| 用途 | **核间通信** IPI（`smp_call_function`、TLBI…） | 网络、timer、RCU、跑 tasklet… |
+| 怎么触发 | 写 GIC **SGI** / 写他核 **MSIP** | `raise_softirq()` 置位 |
+| 与 GIC | 走 IAR/EOI，有 Pending/Active | **不读 IAR、不写 EOIR，无 INTID** |
+
+softirq 机制**完全不操作 GIC**。时间线上是硬中断路径先 EOI，再 `raise`；`irq_exit` 里跑 `__do_softirq` 时该硬件号通常已 Inactive。底半部细节见 [`../01-kernel/01-scheduling.md`](../01-kernel/01-scheduling.md) §1.6。
+
 ---
 
 ## 2.7 GIC 与 Device Tree — 对照 PLIC DT
@@ -269,8 +322,10 @@ uart0: serial@10000000 {
 ## 小结
 
 - GIC 把「外设事件」变成「可被 CPU 认领的中断」；v3 强化了 redistributor 与 ITS 等扩展。
-- SGI/PPI/SPI 与 RV 的软中断/定时器/PLIC IRQ 可对照记忆。
+- SGI/PPI/SPI 与 RV 的软中断/定时器/PLIC IRQ 可对照记忆；**SGI/IPI ≠ Linux softirq**。
 - 生命周期要能走到 Linux 的 handler：ack → 处理 → eoi/complete。
+- 顶半部时该号多为 **Active**；底半部时通常已 **EOI/Inactive**；softirq **不碰 GIC**。
+- Inactive 只释放 GIC 优先级占用；CPU 侧还要 **`DAIF.I`**。`MEIP` 是 pending，不是总开关。
 - 安全分组是 ARM 特色：Group0→EL3，Secure Group1→TEE，NS Group1→Linux；RV 常用 PMP 等保护 Secure 资源。
 - Secure IRQ 路径是 **FIQ→EL3**（不是 Linux SMC）；1020/1021 是 IAR 上的切 world 信令，1023 是真伪中断。
 
@@ -283,6 +338,9 @@ uart0: serial@10000000 {
 5. IAR/EOIR 与 PLIC Claim/Complete 如何对应？
 6. Linux 跑着来了 Secure Group1：从 FIQ 到回 Linux 的步骤？为何不是 SMC？
 7. 读 `ICC_IAR0_EL1` 得到 1020 / 1021 / 1023 各意味着什么？
+8. 顶半部 / 底半部时该 INTID 在 GIC 上分别什么状态？softirq 操作 GIC 吗？
+9. Inactive 是否等于立刻能响应别的中断？`DAIF.I` 与 `MEIP` 各对应什么？
+10. 硬件 SGI/IPI 与 Linux softirq 差在哪？
 
 ---
 

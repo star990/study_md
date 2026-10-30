@@ -166,6 +166,8 @@ EL3  Secure Monitor          M-mode  机器态（最高特权，BootROM 在这�
 | F (FIQ) | **无** | RV 无 FIQ 概念 |
 | A (SError) | 平台 NMI / 总线错误 | 非标准，vendor 定义 |
 
+> **别把 `MEIP` 当成总开关**：`mip.MEIP` 是外部中断 **pending**；总 mask 是 `mstatus.MIE`，外部类使能是 `mie.MEIE`。ARM 对应：总 mask = **`DAIF.I`**，pending 指示 ≈ GIC 拉 **`nIRQ`**。完整使能链与顶/底半部 GIC 状态见 [`02-gic.md`](02-gic.md) §2.6.1–2.6.2。
+
 ```c
 /* ARM 关中断 */
 MSR DAIFSet, #4          // 关 IRQ
