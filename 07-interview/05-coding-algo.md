@@ -54,6 +54,36 @@
 - **当场要点**：相邻比较，大的往后冒；每趟确定一个末位；可加 `swapped` 提前结束。复杂度 O(n²)，稳定。
 - **参考答**：见「由 Q4」。
 
+### Q5. SoC 双视图 Memory Allocator（L1 Local + L2 Hash）
+
+- **出处**：SoC / 底层软件设计题；偏「地址映射约束下的分配器」，不是纯刷题算法
+- **原题摘要**：片内 4×1MB 独立 memory。**Local/L1**：每核只看本 bank 1MB，直连、低延迟。**SoC/L2**：看到连续 4MB，每 512B 为 Hash 粒度，拆成 4×128B 分别落到 4 个 bank 的同一 local offset。需同时支持 `alloc_l1(memory_id, size)` 与 `alloc_l2(size)`，共用物理空间、禁止重叠，可动态释放；**禁止**简单划死两块固定区分别给 L1/L2；利用率与分配性能为加分项。
+- **映射直觉**（面试先画）：
+
+```text
+SoC 0x000..0x1FF (512B stripe 0)
+  0x000..0x07F -> Mem0 @0x000
+  0x080..0x0FF -> Mem1 @0x000
+  0x100..0x17F -> Mem2 @0x000
+  0x180..0x1FF -> Mem3 @0x000
+SoC 0x200..0x3FF -> 四 bank 各 @0x080
+```
+
+- **常见追问**：
+  1. 管理粒度选多大？为什么不是按字节或按 1KB？
+  2. L1 占了 Mem0 的一段后，哪些 L2 区间彻底不能用？
+  3. 如何避免「固定半给 L1、半给 L2」却仍提高利用率？
+  4. free 后碎片怎么合并？L2 中间夹脏 stripe 怎么办？
+  5. 分配/释放如何从 O(条数扫描) 升到 freelist/区间树？
+- **当场要点**（口述骨架）：
+  1. **粒度**：`slice=128B`，`stripe=512B=4×slice`；每 bank 8192 slice，全局 8192 条 stripe。
+  2. **状态**：每条 stripe 一个 4-bit `used_mask`（bit m = Mem_m 是否占用）。`mask==0` 才可做 L2；任一 bit 置位则该 stripe 对 L2「毒化」。
+  3. **alloc_l1**：size 上对齐 128B；在指定 bank 找连续空 slice；置对应 bit。优先塞进**已毒化** stripe。
+  4. **alloc_l2**：size 上对齐 512B；找连续 `mask==0` 的 stripe，一次将四 bank 全占（`mask=0xF`）。
+  5. **free**：按 handle 清 mask，相邻空闲合并；某 stripe 回到 0 后重新可被 L2 使用。
+  6. **策略加分**：L1 低端/脏区优先，L2 高端吃干净区——**对向生长**，不是固定预留。
+- **参考答 / 代码**：见「由 Q5」；完整可编译骨架 `07-interview/soc_l1_l2_allocator.c`。
+
 ---
 
 ## 二、盲区延伸
@@ -572,6 +602,79 @@ void bubble_sort(int *a, int n)
 }
 ```
 
+### 由 Q5 → 粒度、冲突模型与对向生长
+
+先钉死地址关系（现场 30 秒画完）：
+
+```text
+stripe_id = soc_addr / 512
+mem_id    = (soc_addr % 512) / 128
+local_off = stripe_id * 128 + (soc_addr % 128)
+```
+
+| 模式 | 需要的物理条件 | 副作用 |
+|------|----------------|--------|
+| L1 | 单 bank 上连续空 **slice** | 所涉 stripe 的对应 bit 置位 → 整条 stripe **不能再做 L2** |
+| L2 | 连续若干 stripe 且每条 `used_mask==0` | 四 bank 对应 slice 全占，之后都不能再 L1 |
+
+**反例（题面）**：`alloc_l1(Mem0, 128)` 占 Mem0@0 后，SoC `0x000..0x1FF` 整条 512B 都不能作为完整 L2；反之先 `alloc_l2(512)` 则四 bank 各 128B 都不能再给 L1。
+
+利用率关键句（加分）：**L1 优先填已毒化 stripe**（反正 L2 用不了）；只有脏区装不下才开新的干净 stripe。L2 与 L1 **对向生长**（例如 L1 偏低地址、L2 偏高地址），边界随分配移动——满足「禁止固定预留」又减少大块 L2 被切碎。
+
+碎片：free 后按 bank 合并 L1 空闲 run；stripe 回到 `mask==0` 再并入 L2 干净 run。驱动缓冲一般不能搬移已分配块，故 **不做 compact**，靠策略减碎片。性能加分：基线可扫 `used_mask[]`；量产再维护 `l1_free[4]` 区间表 + `l2_free` 干净 stripe run。
+
+### 由 Q5 → 数据结构与 API 骨架
+
+```c
+#define SLICE_SIZE   128u
+#define STRIPE_SIZE  512u
+#define NUM_STRIPES  8192   /* 1MB / 128 per bank */
+
+typedef struct {
+    uint8_t used_mask[NUM_STRIPES]; /* bit m => Memory_m occupied */
+    /* plus alloc handle table for free() */
+} allocator_t;
+
+int alloc_l1(allocator_t *A, int memory_id, uint32_t size, uint32_t *local_off_out);
+int alloc_l2(allocator_t *A, uint32_t size, uint32_t *soc_addr_out);
+int free_alloc(allocator_t *A, int handle);
+```
+
+占位与查找（与 `soc_l1_l2_allocator.c` 一致）：
+
+```c
+static void mark_l1(allocator_t *A, int bank, uint32_t base, uint32_t n)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        A->used_mask[base + i] |= (uint8_t)(1u << bank);
+}
+
+static void mark_l2(allocator_t *A, uint32_t base, uint32_t n)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        A->used_mask[base + i] = 0x0F; /* all 4 banks */
+}
+
+/* L1: pass1 dirty-only, pass2 low-address any free bank slices */
+static int find_l1(const allocator_t *A, int bank, uint32_t n, uint32_t *out_base);
+
+/* L2: only fully-free stripes, search from high end */
+static int find_l2(const allocator_t *A, uint32_t n, uint32_t *out_base);
+```
+
+`alloc_l1`：`n = ceil_align(size, 128) / 128` → `find_l1` → `mark_l1` → 返回 `local_off = base * 128`。  
+`alloc_l2`：`n = ceil_align(size, 512) / 512` → `find_l2` → `mark_l2` → 返回 `soc_addr = base * 512`。  
+`free_alloc`：按 handle 类型 `unmark_l1` / `unmark_l2`。
+
+现场假设 size **按 128/512 对齐**（或内部上对齐）；非对齐 L2 会逼出 partial stripe，口述提一句即可。完整可编译 demo（含 dirty-first / 高端 L2）：
+
+```text
+07-interview/soc_l1_l2_allocator.c
+cc -O2 -Wall -Wextra -o soc_alloc 07-interview/soc_l1_l2_allocator.c && ./soc_alloc
+```
+
 ---
 
 ## 小结
@@ -583,4 +686,5 @@ void bubble_sort(int *a, int n)
 5. **字符串倒转**：标准库无 `strrev`；C / RV32 都是双指针；找尾后 `-1`；`lb`/`lbu` 对纯 swap 等价。  
 6. **纯圆环长度**：快慢指针从 `head` 同出，第一次相遇时的步数即长度。  
 7. **冒泡排序**：相邻交换、每趟固定末位；`swapped` 可提前退出；O(n²)、稳定。  
-8. 加分点：契约、短写、空满自测、数组 vs 链表、以及 `lb`/`lbu` 讲清楚。
+8. **L1/L2 双视图分配**：`slice/stripe` + 每 stripe `used_mask`；L1 毒化 L2、L2 占满四 bank；脏区优先 + 对向生长，禁止固定分区。  
+9. 加分点：契约、短写、空满自测、数组 vs 链表、`lb`/`lbu`，以及 Hash 映射下的冲突与利用率策略。
